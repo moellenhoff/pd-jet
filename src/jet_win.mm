@@ -138,6 +138,11 @@ typedef struct _jet_win {
   int         x_frameActive;
   std::vector<RecordedDraw>   x_draws;
   std::vector<unsigned char>  x_arena;
+
+  // named textures (jet_share/jet_use), see jet_shared.h. A pointer
+  // because std::map isn't valid when zero-filled like the vectors are;
+  // made in jet_win_new. The map retains its textures.
+  std::map<t_symbol *, id<MTLTexture>> *x_named;
 } t_jet_win;
 
 // ---------------------------------------------------------------
@@ -170,6 +175,34 @@ static std::map<t_symbol *, t_jet_win *> g_windowsByName;
 // completely window-agnostic. jet_win_tick sets this right before
 // banging its own heads and clears it right after.
 static t_jet_win *g_activeWindow = nullptr;
+
+void jet_win_publish_texture(t_symbol *name, id<MTLTexture> tex)
+{
+  if(!g_activeWindow || !g_activeWindow->x_named || !name) {
+    return;
+  }
+  auto &m = *g_activeWindow->x_named;
+  auto it = m.find(name);
+  id<MTLTexture> old = (it != m.end()) ? it->second : nil;
+  if(old == tex) {
+    return;
+  }
+  if(tex) {
+    m[name] = [tex retain];
+  } else {
+    m.erase(name);
+  }
+  [old release];
+}
+
+id<MTLTexture> jet_win_named_texture(t_symbol *name)
+{
+  if(!g_activeWindow || !g_activeWindow->x_named) {
+    return nil;
+  }
+  auto it = g_activeWindow->x_named->find(name);
+  return (it != g_activeWindow->x_named->end()) ? it->second : nil;
+}
 
 int jet_win_frame_active(void) { return g_activeWindow && g_activeWindow->x_frameActive; }
 id<MTLSamplerState> jet_win_sampler(void) { return g_sampler; }
@@ -1048,6 +1081,7 @@ static void *jet_win_new(t_symbol *s, int argc, t_atom *argv)
   x->x_rendering = 1;
 
   x->x_title = new std::string("jet_win");
+  x->x_named = new std::map<t_symbol *, id<MTLTexture>>();
   x->x_dimenW = 640;
   x->x_dimenH = 480;
   x->x_offsetX = 100;
@@ -1120,6 +1154,11 @@ static void jet_win_free(t_jet_win *x)
   jet_win_destroy(x);
   clock_free(x->x_clock);
   delete x->x_title;
+  for(auto &kv : *x->x_named) {
+    [kv.second release];
+  }
+  delete x->x_named;
+  x->x_named = nullptr;
   std::vector<RecordedDraw>().swap(x->x_draws);
   std::vector<unsigned char>().swap(x->x_arena);
 

@@ -59,6 +59,11 @@ static void jet_texture_bang(t_jet_texture *x)
   MTLRegion region = MTLRegionMake2D(0, 0, w, h);
   [tex replaceRegion:region mipmapLevel:0 withBytes:rgba bytesPerRow:(NSUInteger)(w * 4)];
 
+  // newTextureWithDescriptor returns an owned (+1) texture and this
+  // object is compiled without ARC: let go of the previous frame's one,
+  // or every bang leaks a whole texture. (Metal keeps a texture alive
+  // for as long as an encoded command buffer still uses it.)
+  [x->x_tex release];
   x->x_tex = tex;
   jet_win_set_current_texture(tex);
   outlet_bang(x->x_outlet);
@@ -72,10 +77,16 @@ static void *jet_texture_new(void)
   return (void *)x;
 }
 
+static void jet_texture_free(t_jet_texture *x)
+{
+  [x->x_tex release];
+  x->x_tex = nil;
+}
+
 extern "C" void jet_texture_setup(void)
 {
   jet_texture_class = class_new(gensym("jet_texture"),
-                                  (t_newmethod)jet_texture_new, 0,
+                                  (t_newmethod)jet_texture_new, (t_method)jet_texture_free,
                                   sizeof(t_jet_texture), CLASS_DEFAULT,
                                   (t_atomtype)0);
   class_addbang(jet_texture_class, jet_texture_bang);

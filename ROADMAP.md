@@ -17,7 +17,7 @@ nur im laufenden Pd sichtbar sind.
 | 1 | Name/Präfix `jet_`, eigener Ordner, Git-Repo | ja | 1 | erledigt (Repo ohne Commit angelegt) |
 | 2 | **Befehlsliste statt offenem Encoder**: Objekte zeichnen Befehle pro Render-Pass auf, das Fenster führt sie am Frame-Ende aus | ja – Herzstück des Umbaus | 5–8 | erledigt für den Bildschirm-Pass (Formen zeichnen Befehle auf, `jet_win` führt sie in einem Pass aus, sortiert Transparenz); Offscreen-Erzeuger (perlin, feedback, slitscan) kodieren ihre eigenen Pässe weiterhin sofort – wird erst für `jet_render`/Teilszenen in Texturen relevant |
 | 3 | **Zustand pro Kette** (Transform, Textur, Tiefentest, Blending) beim Kettenstart sauber zurücksetzen | ja | 1–2 | erledigt (`jet_win_beginChain`; Blending folgt, sobald es Blending gibt) |
-| 4 | **Benannte Textur-Handles** zusätzlich zum „current texture“ (bleibt der normale Gem-artige Fluss) | ja, Hybrid | 3–5 | offen |
+| 4 | **Benannte Textur-Handles** zusätzlich zum „current texture“ (bleibt der normale Gem-artige Fluss) | ja, Hybrid | 3–5 | erledigt (`jet_share name` / `jet_use name`, fensterweit, Fenster hält die Textur per retain) |
 | 5 | **Zeichenreihenfolge**: Layer/Priorität pro Form, Sortierung für Transparenz (braucht 2) | ja | 3–5 | offen |
 | 6 | **Fenster/Event-Schicht** sauber (Display-Link, ESC, `destroy`, Live-Resize, Retina) | ja | 3–5 | offen |
 | 7 | **Taktung**: A) Pd-Clock wie bisher · B) Pd-Clock + besseres Frame-Pacing · C) eigener Render-Thread mit Display-Link | B jetzt, C erst nach Kurztest | B: 1–2 · C-Spike: 2–3 · C voll: 8–15 | offen |
@@ -80,6 +80,11 @@ eigener Block dazu.
   „tiefengetestet und alpha < 1“ in Aufzeichnungsreihenfolge (damit
   `jet_depth 0` Malerreihenfolge behält), danach die transparenten von
   hinten nach vorn, ohne Tiefe zu schreiben.
+- **Benannte Texturen:** `jet_share <name>` veröffentlicht die aktuelle
+  Textur, `jet_use <name>` bindet sie in beliebiger Kette. Namen gelten
+  pro Fenster und bleiben bis zur nächsten Veröffentlichung; läuft der
+  Erzeuger später als der Verbraucher, kommt das Bild des Vorframes
+  (Priorität der `jet_head` steuert das).
 - **Alpha** kommt aus `jet_color r g b a`; Texturen-Alpha wird ignoriert.
 - **Zustandsbereiche** (Kette / Frame / Objekt) stehen im Kopf von
   `src/jet_shared.h`.
@@ -125,5 +130,8 @@ eigener Block dazu.
   aufeinanderfolgenden String-Literalzeilen zusammen; eine Leerzeile oder
   ein Kommentar hinter dem Literal in derselben Zeile schneidet den
   Shader ab (der Test schlägt dann mit „missing }“ fehl).
+- **Kein ARC:** alles wird ohne `-fobjc-arc` gebaut. `new…`-Objekte (z. B.
+  `newTextureWithDescriptor`) sind +1 und müssen freigegeben werden;
+  `jet_texture` hat pro Bang eine Textur verloren (behoben).
 - **setVertexBytes** darf höchstens 4 KB: größere Netze (OBJ) brauchen
   einen `MTLBuffer` (`JetDrawDesc.vertexBuffer`).

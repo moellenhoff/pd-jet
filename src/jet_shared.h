@@ -89,6 +89,17 @@ int  jet_win_get_current_pixels(const unsigned char **outRgba,
 void jet_win_set_current_texture(id<MTLTexture> tex);
 id<MTLTexture> jet_win_current_texture(void);
 
+// NAMED textures: a window-wide registry next to the chain-scoped
+// "current texture". jet_share publishes the current texture under a
+// name, jet_use binds a named texture as the current one - in any
+// chain, in this frame or (when the producer runs later) the previous
+// one. Unlike the current texture, names persist across chains and
+// frames until the producer republishes (the window retains the
+// texture, so a producer rebuilding its textures can't leave a
+// dangling pointer). Producers republish every bang. Per window.
+void jet_win_publish_texture(t_symbol *name, id<MTLTexture> tex);
+id<MTLTexture> jet_win_named_texture(t_symbol *name);
+
 // jet_head calls these in its constructor/destructor to join/leave
 // a specific jet_win's set of chains that get banged once per
 // frame, in ascending priority order (same convention as Gem's
