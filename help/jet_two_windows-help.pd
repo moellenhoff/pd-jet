@@ -1,0 +1,26 @@
+#N canvas 100 100 640 480 10;
+#X obj 40 40 jet_win winA 30;
+#X msg 40 100 create;
+#X msg 130 100 destroy;
+#X obj 40 150 jet_head 0 winA;
+#X obj 40 190 jet_triangle 0 0 2.4 1 0.3 0.3;
+#X obj 340 40 jet_win winB 15;
+#X msg 340 100 create;
+#X msg 430 100 destroy;
+#X obj 340 150 jet_head 0 winB;
+#X obj 340 190 jet_rectangle 0 0 2 2 0.3 0.6 1;
+#X text 40 240 each jet_win now takes an optional NAME (a symbol
+\, in any order with the fps arg) \; each jet_head takes a matching
+second arg to say which window's chain it belongs to. winA/winB
+are two fully independent render chains \, with independent content
+(triangle vs rectangle) AND independent frame rates (30 vs 15) -
+before this \, every jet_head fed into one shared global chain
+\, so any second window just mirrored the first window's picture.
+plain [jet_win] and [jet_head 0] with no name still both default
+to "default" \, so single-window patches are unaffected.;
+#X connect 1 0 0 0;
+#X connect 2 0 0 0;
+#X connect 6 0 5 0;
+#X connect 7 0 5 0;
+#X connect 3 0 4 0;
+#X connect 8 0 9 0;

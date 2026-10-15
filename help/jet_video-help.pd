@@ -1,0 +1,26 @@
+#N canvas 100 100 600 480 10;
+#X obj 40 40 jet_win;
+#X msg 40 100 create;
+#X msg 130 100 destroy;
+#X msg 250 100 start;
+#X msg 340 100 stop;
+#X obj 40 150 jet_head 0;
+#X obj 40 180 jet_video;
+#X obj 40 210 jet_texture;
+#X obj 40 240 jet_rectangle 0 0 4.2 3.2 1 1 1;
+#X text 40 280 jet_video captures the default camera straight onto
+the GPU - CVMetalTextureCache wraps the camera's own CVPixelBuffer
+(already GPU-visible IOSurface memory) as an id<MTLTexture> with
+no pixel copy at all\, unlike Gem's pix_video\, which decodes to
+CPU RAM first and runs every pix_* effect after it as a CPU loop
+over that RAM. send "start" once (macOS will prompt for camera permission
+the first time) before banging the chain \; "stop" releases the camera.
+like jet_perlin\, this sets "current texture" directly \, so jet_texture
+just passes it straight through instead of uploading from CPU pixels.;
+#X connect 1 0 0 0;
+#X connect 2 0 0 0;
+#X connect 3 0 6 0;
+#X connect 4 0 6 0;
+#X connect 5 0 6 0;
+#X connect 6 0 7 0;
+#X connect 7 0 8 0;

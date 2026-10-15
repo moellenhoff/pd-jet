@@ -1,0 +1,37 @@
+#N canvas 100 100 560 460 10;
+#X obj 40 40 jet_win 30;
+#X msg 40 100 create;
+#X msg 130 100 destroy;
+#X msg 40 150 dimen 800 500;
+#X msg 40 180 dimen 400 300;
+#X msg 40 220 offset 200 200;
+#X msg 40 250 title my_custom_title;
+#X msg 40 290 border 0;
+#X msg 130 290 border 1;
+#X msg 40 320 fullscreen 1;
+#X msg 130 320 fullscreen 0;
+#X msg 40 360 profile 1;
+#X msg 130 360 profile 0;
+#X msg 40 390 fps;
+#X floatatom 130 390 0 0 0 0 fps - -;
+#X text 250 150 dimen/offset/title/border/fullscreen \, ported from
+Gem's gemwin. the creation arg (30 here) sets the target frame rate
+\, exactly like [gemwin 30] - it's stored as a tick interval (1000/fps
+ms) instead of the old fixed 16ms. profile 1 turns on per-frame timing
+(like Gem \, off by default to avoid overhead) \; fps then reports
+the last frame's instantaneous rate through the left outlet - should
+read close to 30 now.;
+#X connect 1 0 0 0;
+#X connect 2 0 0 0;
+#X connect 3 0 0 0;
+#X connect 4 0 0 0;
+#X connect 5 0 0 0;
+#X connect 6 0 0 0;
+#X connect 7 0 0 0;
+#X connect 8 0 0 0;
+#X connect 9 0 0 0;
+#X connect 10 0 0 0;
+#X connect 11 0 0 0;
+#X connect 12 0 0 0;
+#X connect 13 0 0 0;
+#X connect 0 0 14 0;

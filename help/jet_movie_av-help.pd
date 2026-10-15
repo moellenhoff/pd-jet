@@ -1,0 +1,50 @@
+#N canvas 100 100 640 560 10;
+#X obj 40 40 jet_win;
+#X msg 40 100 create;
+#X msg 130 100 destroy;
+#X obj 40 150 jet_head 0;
+#X obj 40 180 jet_movie ./anim-1.mov av;
+#X obj 40 210 jet_texture;
+#X obj 40 240 jet_rectangle 0 0 3.2 3.2 1 1 1;
+#X obj 300 180 jet_movie~ ./anim-1.mov av;
+#X obj 300 420 dac~;
+#X msg 300 240 speed 2;
+#X msg 380 240 speed 0.5;
+#X msg 300 270 speed 1;
+#X msg 380 270 speed -1;
+#X msg 300 310 loop 0;
+#X msg 380 310 loop 1;
+#X msg 300 350 play 0;
+#X msg 380 350 play 1;
+#X text 40 280 CAUTION: turn your volume down before testing - this
+plays the clip's raw audio straight into dac~.;
+#X text 40 460 jet_movie and jet_movie~ share the sync name "av"
+(the second creation arg on both) - the video object stops free-running
+off its own fps timer and instead decodes forward to keep pace with
+the audio object's own playback position\, read from jet_movie_shared.h's
+jet_movie_audio_get_position(). speed on jet_movie~ is a tape-style
+varispeed: 2 plays twice as fast AND an octave higher\, 0.5 half
+as fast and an octave lower\, -1 plays backward at normal speed -
+and the picture follows right along\, since it's just decoding forward
+to catch up with wherever the audio's read pointer now is. play
+0/1 and loop 0/1 work the same way as the plain jet_movie/jet_movie~
+objects\, sent to whichever one(s) you want to affect (send to both
+for playback\, since they don't automatically mirror each other's
+play state).;
+#X connect 1 0 0 0;
+#X connect 2 0 0 0;
+#X connect 3 0 4 0;
+#X connect 4 0 5 0;
+#X connect 5 0 6 0;
+#X connect 7 0 8 0;
+#X connect 7 1 8 1;
+#X connect 9 0 7 0;
+#X connect 10 0 7 0;
+#X connect 11 0 7 0;
+#X connect 12 0 7 0;
+#X connect 13 0 7 0;
+#X connect 14 0 7 0;
+#X connect 15 0 4 0;
+#X connect 15 0 7 0;
+#X connect 16 0 4 0;
+#X connect 16 0 7 0;

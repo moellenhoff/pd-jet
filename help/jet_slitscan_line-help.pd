@@ -1,0 +1,37 @@
+#N canvas 100 100 600 480 10;
+#X obj 40 40 jet_win;
+#X msg 40 100 create;
+#X msg 130 100 destroy;
+#X msg 250 100 start;
+#X msg 340 100 stop;
+#X obj 40 150 jet_head 0;
+#X obj 40 180 jet_video;
+#X obj 40 210 jet_slitscan_line 40;
+#X obj 40 240 jet_rectangle 0 0 4.2 3.2 1 1 1;
+#X msg 250 150 delay 10;
+#X msg 340 150 delay 80;
+#X msg 250 190 reverse 1;
+#X msg 340 190 reverse 0;
+#X msg 250 230 freeze 1;
+#X msg 340 230 freeze 0;
+#X text 40 280 jet_slitscan_line: classic row-based slit-scan -
+each horizontal line comes from a different point in time \, delay
+increasing linearly top to bottom (or bottom to top with reverse
+1). keeps its history as a Metal texture2d_array (one array slice
+per delay step) \; the per-row "which past frame" lookup that's a
+CPU loop in pix_slitscan_line happens once per pixel \, in parallel
+\, in the fragment shader. freeze 1 stops recording new frames so
+you can watch the frozen history scroll by as delay/reverse change.;
+#X connect 1 0 0 0;
+#X connect 2 0 0 0;
+#X connect 3 0 6 0;
+#X connect 4 0 6 0;
+#X connect 5 0 6 0;
+#X connect 6 0 7 0;
+#X connect 7 0 8 0;
+#X connect 9 0 7 0;
+#X connect 10 0 7 0;
+#X connect 11 0 7 0;
+#X connect 12 0 7 0;
+#X connect 13 0 7 0;
+#X connect 14 0 7 0;

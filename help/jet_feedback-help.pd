@@ -1,0 +1,44 @@
+#N canvas 100 100 640 580 10;
+#X obj 40 40 jet_win;
+#X msg 40 100 create;
+#X msg 130 100 destroy;
+#X msg 250 100 start;
+#X msg 340 100 stop;
+#X obj 40 150 jet_head 0;
+#X obj 40 180 jet_video;
+#X obj 40 210 jet_feedback 640 480;
+#X obj 40 240 jet_rectangle 0 0 4.2 3.2 1 1 1;
+#X msg 250 150 decay 0.95;
+#X msg 340 150 decay 0.5;
+#X msg 250 190 rotate 3;
+#X msg 340 190 rotate -3;
+#X msg 250 230 zoom 1.02;
+#X msg 340 230 zoom 0.98;
+#X msg 250 270 zoom 1;
+#X text 40 300 jet_feedback blends "current texture" (from jet_video
+here \, but works after ANY texture-producing object - jet_perlin
+\, jet_image+jet_texture \, anything) with a rotated/zoomed copy
+of its OWN previous output - classic video-feedback spiral trails
+\, entirely on the GPU via a ping-pong pair of render targets (two
+offscreen textures\, alternating which is "read as last frame" and
+"written as this frame" each tick). decay (0-0.999) is how much of
+the trail persists each frame \; rotate is degrees per tick \; zoom
+>1 makes trails spiral outward \, <1 inward. try decay 0.95 with
+rotate 3 and zoom 1.01 for a classic psychedelic spiral. no jet_texture
+needed here - jet_video and jet_feedback both already produce
+a texture directly \, jet_rectangle reads "current texture" on
+its own.;
+#X connect 1 0 0 0;
+#X connect 2 0 0 0;
+#X connect 3 0 6 0;
+#X connect 4 0 6 0;
+#X connect 5 0 6 0;
+#X connect 6 0 7 0;
+#X connect 7 0 8 0;
+#X connect 9 0 7 0;
+#X connect 10 0 7 0;
+#X connect 11 0 7 0;
+#X connect 12 0 7 0;
+#X connect 13 0 7 0;
+#X connect 14 0 7 0;
+#X connect 15 0 7 0;

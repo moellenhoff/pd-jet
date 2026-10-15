@@ -1,0 +1,67 @@
+#N canvas 100 100 760 680 10;
+#X obj 40 40 jet_win;
+#X msg 40 100 create;
+#X msg 130 100 destroy;
+#X obj 40 150 jet_head 0;
+#X obj 40 180 t b b;
+#X obj 40 210 f 0;
+#X obj 150 210 + 2;
+#X msg 40 240 set 0 \$1 0;
+#X obj 40 270 jet_rotateXYZ 0 0 0;
+#X obj 40 300 jet_translateXYZ 0 0 0;
+#X obj 40 330 jet_scaleXYZ 1 1 1;
+#X obj 40 360 jet_cube 2 0.8 0.5 0.3;
+#X msg 300 150 camera 0 0 4;
+#X msg 420 150 camera 4 2 8;
+#X msg 300 190 fov 90;
+#X msg 420 190 fov 40;
+#X msg 300 230 light 1 1 0.3;
+#X msg 420 230 light -1 0.5 1;
+#X msg 550 270 set 30 30 30;
+#X msg 660 270 set 0 0 0;
+#X msg 550 300 set 0.8 0 0;
+#X msg 660 300 set 0 0 0;
+#X msg 550 330 set 1.6 1.6 1.6;
+#X msg 660 330 set 1 1 1;
+#X text 300 270 rotateXYZ (tilt/reset);
+#X text 300 300 translateXYZ (shift right/reset);
+#X text 300 330 scaleXYZ (bigger/reset);
+#X text 40 400 jet_rotateXYZ/translateXYZ/scaleXYZ are like Gem's
+own - one object each \, X/Y/Z all at once \, instead of separate
+2D/3D objects with a single axis or no Z at all. every one of them
+updates BOTH the 2D 3x3 transform (jet_triangle/jet_rectangle)
+AND the 3D 4x4 one (jet_cube) on every bang - 2D only ever sees
+the X/Y (or \, for rotate\, just Z) components\, since that's all
+that has meaning on a flat plane - so the exact same chain of transform
+objects works whether a 2D or 3D shape follows them\, no separate
+objects needed depending on which. jet_win owns a camera (position/lookat/fov)
+and light \, computed once per FRAME rather than per chain. the
+counter here (f/+2/set) drives the Y rotation directly off the render
+tick - no metro needed - using the standard "set the value \, THEN
+bang" trigger-ordered Pd idiom \, since a message alone only updates
+stored state\, not the transform itself until the next bang reads
+it. try the transform/camera/fov/light messages while it spins.;
+#X connect 1 0 0 0;
+#X connect 2 0 0 0;
+#X connect 3 0 4 0;
+#X connect 4 1 5 0;
+#X connect 5 0 6 0;
+#X connect 6 0 5 1;
+#X connect 5 0 7 0;
+#X connect 7 0 8 0;
+#X connect 4 0 8 0;
+#X connect 8 0 9 0;
+#X connect 9 0 10 0;
+#X connect 10 0 11 0;
+#X connect 12 0 0 0;
+#X connect 13 0 0 0;
+#X connect 14 0 0 0;
+#X connect 15 0 0 0;
+#X connect 16 0 0 0;
+#X connect 17 0 0 0;
+#X connect 18 0 8 0;
+#X connect 19 0 8 0;
+#X connect 20 0 9 0;
+#X connect 21 0 9 0;
+#X connect 22 0 10 0;
+#X connect 23 0 10 0;
