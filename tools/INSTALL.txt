@@ -1,7 +1,7 @@
 jet - GPU-Render-Ketten fuer Pure Data (Metal, macOS)
 
 Voraussetzungen: Mac mit Apple Silicon (M1 oder neuer), macOS 11 oder neuer,
-Pure Data (vanilla) 0.51 oder neuer. Auf Intel-Macs laeuft jet nicht.
+Pure Data (vanilla), entwickelt und getestet mit Pd 0.56. Auf Intel-Macs laeuft jet nicht.
 
 Installation (nichts muss kompiliert werden):
 
