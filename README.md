@@ -103,7 +103,7 @@ A video-effect chain looks like this:
 
 | Group | Objects |
 |---|---|
-| Window / chain | `jet_win` (window, camera, light, render on/off), `jet_head` (chain start; optional priority and window name) |
+| Window / chain | `jet_win` (window, borderless fullscreen on any display, camera, light, render on/off), `jet_head` (chain start; optional priority and window name) |
 | State | `jet_color r g b a`, `jet_depth`, `jet_separator`, `jet_translateXYZ`, `jet_rotateXYZ`, `jet_scaleXYZ` |
 | Shapes | `jet_rectangle`, `jet_triangle`, `jet_cube` (real 3D geometry; textured if a texture is current) |
 | Scenes | `jet_render` (renders a sub-scene with its own camera into a texture) |
@@ -189,8 +189,7 @@ bundles must come from the same build.
 
 See [ROADMAP.md](ROADMAP.md). Planned: more effect blocks
 (edge, displace, mirror, tile), fusing neighbouring per-pixel effects into one GPU pass, compute shaders,
-OBJ model loading with lighting. Known issues: reverse video playback is choppy, and leaving fullscreen
-with ESC is not fully reliable.
+OBJ model loading with lighting. Known issue: reverse video playback is choppy.
 
 ## License
 

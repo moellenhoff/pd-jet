@@ -109,7 +109,11 @@ typedef struct _jet_win {
   int         x_dimenW, x_dimenH;
   int         x_offsetX, x_offsetY;
   int         x_border;
-  int         x_fullscreen;
+  int         x_fullscreen;   // the REQUESTED state ("fullscreen" message); applied whenever a window exists
+  int         x_isFs;         // the window currently is in our fullscreen mode
+  int         x_display;      // 0 = the display the window is on, N = NSScreen number N (1 = primary)
+  int         x_frameDirty;   // dimen/offset arrived while fullscreen: use them when leaving it
+  NSRect      x_savedFrame;   // windowed frame to return to
 
   int         x_profiling;
   float       x_fps;
@@ -841,19 +845,10 @@ extern "C" void jet_win_scene_end(id<MTLTexture> color, id<MTLTexture> depth, co
 // default is NO)
 - (BOOL)acceptsFirstResponder { return YES; }
 
-// ESC exits native fullscreen - not a stock macOS behavior for
-// -toggleFullScreen:, so we bind it ourselves. while fullscreen,
-// jet_win's window is the only reachable one (its own Space), so
-// this is the quickest way back to the Pd patch.
+// ESC leaving fullscreen is handled by the window's event monitor (see
+// jet_win_create); everything else goes up the responder chain
 - (void)keyDown:(NSEvent *)event
 {
-  static const unsigned short kEscKeyCode = 53;
-  const BOOL isFullscreen =
-    (self.window.styleMask & NSWindowStyleMaskFullScreen) != 0;
-  if(event.keyCode == kEscKeyCode && isFullscreen) {
-    [self.window toggleFullScreen:nil];
-    return;
-  }
   [super keyDown:event];
 }
 
@@ -904,6 +899,15 @@ extern "C" void jet_win_scene_end(id<MTLTexture> color, id<MTLTexture> depth, co
 // the cross-bundle accessor functions that need its full definition)
 // ---------------------------------------------------------------
 
+// a borderless NSWindow refuses to become key by default, which would
+// leave ESC (and any other key) with nowhere to go in fullscreen
+@interface JetNSWindow : NSWindow
+@end
+@implementation JetNSWindow
+- (BOOL)canBecomeKeyWindow { return YES; }
+- (BOOL)canBecomeMainWindow { return YES; }
+@end
+
 static NSUInteger jet_win_styleMask(const t_jet_win *x)
 {
   if(!x->x_border) {
@@ -915,6 +919,76 @@ static NSUInteger jet_win_styleMask(const t_jet_win *x)
 
 static void jet_win_tick(t_jet_win *x);
 
+// Cocoa's global screen coordinates have their origin at the bottom left
+// of the PRIMARY display, y up. jet_win's "offset" works like Pd/Gem
+// screen coordinates instead: origin at the top left of the primary
+// display, y down, other displays continuing beyond it (a display to the
+// right of a 1920 wide primary starts at x = 1920).
+static CGFloat jet_win_primaryHeight(void)
+{
+  NSArray<NSScreen *> *screens = [NSScreen screens];
+  return screens.count ? screens[0].frame.size.height : 0;
+}
+
+static void jet_win_applyOffset(t_jet_win *x)
+{
+  [x->x_window setFrameTopLeftPoint:NSMakePoint(x->x_offsetX,
+                                                jet_win_primaryHeight() - x->x_offsetY)];
+}
+
+static NSScreen *jet_win_targetScreen(t_jet_win *x)
+{
+  NSArray<NSScreen *> *screens = [NSScreen screens];
+  if(x->x_display >= 1 && x->x_display <= (int)screens.count) {
+    return screens[x->x_display - 1];
+  }
+  NSScreen *s = x->x_window.screen;
+  return s ? s : (screens.count ? screens[0] : nil);
+}
+
+// Makes the window match x_fullscreen. Idempotent, instant and
+// synchronous (no macOS fullscreen Space and no animation, so two windows
+// on two displays behave the same no matter how the "Displays have
+// separate Spaces" setting is): a borderless window covering the target
+// display, above the menu bar and the Dock.
+static void jet_win_applyFullscreen(t_jet_win *x)
+{
+  if(!x->x_open) {
+    return;   // applied when the window is created
+  }
+  NSWindow *win = x->x_window;
+  if(x->x_fullscreen) {
+    NSScreen *screen = jet_win_targetScreen(x);
+    if(!screen) {
+      return;
+    }
+    if(!x->x_isFs) {
+      x->x_savedFrame = win.frame;
+    }
+    win.styleMask = NSWindowStyleMaskBorderless;
+    win.level = NSMainMenuWindowLevel + 1;
+    [win setFrame:screen.frame display:YES];
+    x->x_isFs = 1;
+    const NSRect f = screen.frame;
+    post("jet_win: fullscreen on display %d (%d x %d)",
+         (int)[[NSScreen screens] indexOfObject:screen] + 1, (int)f.size.width, (int)f.size.height);
+  } else if(x->x_isFs) {
+    win.level = NSNormalWindowLevel;
+    win.styleMask = jet_win_styleMask(x);
+    if(x->x_frameDirty) {
+      [win setContentSize:NSMakeSize(x->x_dimenW, x->x_dimenH)];
+      jet_win_applyOffset(x);
+      x->x_frameDirty = 0;
+    } else {
+      [win setFrame:x->x_savedFrame display:YES];
+    }
+    x->x_isFs = 0;
+    post("jet_win: fullscreen off");
+  }
+  [win makeKeyAndOrderFront:nil];
+  [win makeFirstResponder:x->x_view];
+}
+
 static void jet_win_create(t_jet_win *x)
 {
   if(x->x_open) {
@@ -924,18 +998,16 @@ static void jet_win_create(t_jet_win *x)
 
   [NSApplication sharedApplication];
 
-  const NSRect frame = NSMakeRect(x->x_offsetX, x->x_offsetY, x->x_dimenW, x->x_dimenH);
-  NSWindow *win = [[NSWindow alloc] initWithContentRect:frame
+  const NSRect frame = NSMakeRect(0, 0, x->x_dimenW, x->x_dimenH);
+  NSWindow *win = [[JetNSWindow alloc] initWithContentRect:frame
                                               styleMask:jet_win_styleMask(x)
                                                 backing:NSBackingStoreBuffered
                                                   defer:NO];
   [win setTitle:[NSString stringWithUTF8String:x->x_title->c_str()]];
   [win setReleasedWhenClosed:NO];
-  // a plain programmatically-created NSWindow doesn't get native
-  // fullscreen support for free - only windows that come from the
-  // standard app-lifecycle/NIB setup do. without this,
-  // -toggleFullScreen: silently does nothing.
-  win.collectionBehavior = NSWindowCollectionBehaviorFullScreenPrimary;
+  // fullscreen is our own borderless mode (jet_win_applyFullscreen), so
+  // the green zoom button must not start macOS's Space-based one
+  win.collectionBehavior = NSWindowCollectionBehaviorFullScreenNone;
 
   JetWinView *view = [[JetWinView alloc] initWithFrame:frame];
   [win setContentView:view];
@@ -952,9 +1024,9 @@ static void jet_win_create(t_jet_win *x)
     addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown
     handler:^NSEvent *(NSEvent *event) {
     static const unsigned short kEscKeyCode = 53;
-    if(event.window == win && event.keyCode == kEscKeyCode &&
-       (win.styleMask & NSWindowStyleMaskFullScreen)) {
-      [win toggleFullScreen:nil];
+    if(event.window == win && event.keyCode == kEscKeyCode && x->x_isFs) {
+      x->x_fullscreen = 0;
+      jet_win_applyFullscreen(x);
       return nil;  // consume it, don't let it propagate further
     }
     return event;
@@ -963,6 +1035,9 @@ static void jet_win_create(t_jet_win *x)
   x->x_window = win;
   x->x_view = view;
   x->x_open = 1;
+  x->x_isFs = 0;
+  jet_win_applyOffset(x);
+  jet_win_applyFullscreen(x);   // a "fullscreen 1" sent before "create" takes effect now
   x->x_lastFrameSysTime = clock_getlogicaltime();
 
   post("jet_win: window created");
@@ -1001,6 +1076,7 @@ static void jet_win_destroy(t_jet_win *x)
   x->x_window = nil;
   x->x_view = nil;
   x->x_open = 0;
+  x->x_isFs = 0;
   post("jet_win: window destroyed");
 }
 
@@ -1012,7 +1088,9 @@ static void jet_win_dimen(t_jet_win *x, t_floatarg w, t_floatarg h)
 {
   x->x_dimenW = (w < 1) ? 1 : (int)w;
   x->x_dimenH = (h < 1) ? 1 : (int)h;
-  if(x->x_open) {
+  if(x->x_isFs) {
+    x->x_frameDirty = 1;       // used when fullscreen ends
+  } else if(x->x_open) {
     [x->x_window setContentSize:NSMakeSize(x->x_dimenW, x->x_dimenH)];
   }
 }
@@ -1021,12 +1099,10 @@ static void jet_win_offset(t_jet_win *x, t_floatarg ox, t_floatarg oy)
 {
   x->x_offsetX = (int)ox;
   x->x_offsetY = (int)oy;
-  if(x->x_open) {
-    // match Gem/Pd's screen-space convention (origin top-left, y
-    // down) rather than Cocoa's native bottom-left/y-up
-    NSScreen *screen = [NSScreen mainScreen];
-    const CGFloat screenH = screen ? screen.frame.size.height : 0;
-    [x->x_window setFrameTopLeftPoint:NSMakePoint(x->x_offsetX, screenH - x->x_offsetY)];
+  if(x->x_isFs) {
+    x->x_frameDirty = 1;
+  } else if(x->x_open) {
+    jet_win_applyOffset(x);
   }
 }
 
@@ -1041,7 +1117,7 @@ static void jet_win_title(t_jet_win *x, t_symbol *s)
 static void jet_win_border(t_jet_win *x, t_floatarg f)
 {
   x->x_border = (f != 0.f);
-  if(x->x_open) {
+  if(x->x_open && !x->x_isFs) {
     x->x_window.styleMask = jet_win_styleMask(x);
   }
 }
@@ -1058,13 +1134,31 @@ static void jet_win_cursor(t_jet_win *x, t_floatarg f)
 
 static void jet_win_fullscreen(t_jet_win *x, t_floatarg f)
 {
-  const int want = (f != 0.f);
-  if(want == x->x_fullscreen) {
-    return;
+  x->x_fullscreen = (f != 0.f);
+  jet_win_applyFullscreen(x);
+}
+
+// "display N": which display "fullscreen" covers (1 = primary, see
+// "displays"); 0 = the one the window is on
+static void jet_win_display(t_jet_win *x, t_floatarg f)
+{
+  x->x_display = (f < 0.f) ? 0 : (int)f;
+  if(x->x_isFs) {
+    jet_win_applyFullscreen(x);   // move to the other display
   }
-  x->x_fullscreen = want;
-  if(x->x_open) {
-    [x->x_window toggleFullScreen:nil];
+}
+
+static void jet_win_displays(t_jet_win *x)
+{
+  (void)x;
+  NSArray<NSScreen *> *screens = [NSScreen screens];
+  const CGFloat ph = jet_win_primaryHeight();
+  for(NSUInteger i = 0; i < screens.count; i++) {
+    const NSRect f = screens[i].frame;
+    post("jet_win: display %d: %d x %d at offset %d %d%s", (int)i + 1,
+         (int)f.size.width, (int)f.size.height,
+         (int)f.origin.x, (int)(ph - (f.origin.y + f.size.height)),
+         i == 0 ? " (primary)" : "");
   }
 }
 
@@ -1272,6 +1366,10 @@ static void *jet_win_new(t_symbol *s, int argc, t_atom *argv)
   x->x_offsetY = 100;
   x->x_border = 1;
   x->x_fullscreen = 0;
+  x->x_isFs = 0;
+  x->x_display = 0;
+  x->x_frameDirty = 0;
+  x->x_savedFrame = NSMakeRect(0, 0, 0, 0);
   x->x_profiling = 0;
   x->x_fps = 0.f;
   x->x_lastFrameSysTime = 0.0;
@@ -1379,6 +1477,10 @@ extern "C" void jet_win_setup(void)
                   gensym("cursor"), A_FLOAT, 0);
   class_addmethod(jet_win_class, (t_method)jet_win_fullscreen,
                   gensym("fullscreen"), A_FLOAT, 0);
+  class_addmethod(jet_win_class, (t_method)jet_win_display,
+                  gensym("display"), A_FLOAT, 0);
+  class_addmethod(jet_win_class, (t_method)jet_win_displays,
+                  gensym("displays"), A_NULL);
   class_addmethod(jet_win_class, (t_method)jet_win_profile,
                   gensym("profile"), A_FLOAT, 0);
   class_addmethod(jet_win_class, (t_method)jet_win_fpsMess,
