@@ -90,19 +90,19 @@ typedef struct _jet_win {
 
   // this window's own render-chain state (see jet_shared.h) -
   // registered jet_head chains, kept sorted by ascending priority,
-  // plus the CPU/GPU "current" slots and 2D transform they draw with
+  // plus the CPU/GPU "current" slots they draw with
   std::vector<HeadEntry> x_heads;
   id<MTLTexture> x_currentTexture;
   std::vector<unsigned char> x_currentPixels;
   int         x_currentPixelsW, x_currentPixelsH;
-  float       x_transform[9];
 
-  // 3D: additive to the 2D state above (see jet_shared.h). model
-  // transform works exactly like x_transform (reset to identity per
-  // chain, jet_translate3d/rotate3d/scale3d accumulate onto it);
+  // model transform (reset to identity per chain, jet_translateXYZ/
+  // rotateXYZ/scaleXYZ accumulate onto it); x_depth = depth test flag
+  // (chain-scoped, jet_depth);
   // view/projection are recomputed once per FRAME (not per chain,
   // see jet_win_tick) from this window's own camera state below.
   float       x_transform3d[16];
+  int         x_depth;
   float       x_viewMatrix[16];
   float       x_projMatrix[16];
   float       x_camPos[3];
@@ -112,6 +112,7 @@ typedef struct _jet_win {
   float       x_aspect;  // width/height of the actual drawable, set per frame
   float       x_lightDir[3];
   float       x_lightColor[3];
+  float       x_color[4];  // chain-scoped current color, see jet_shared.h
 } t_jet_win;
 
 // ---------------------------------------------------------------
@@ -188,29 +189,20 @@ id<MTLTexture> jet_win_current_texture(void)
   return g_activeWindow ? g_activeWindow->x_currentTexture : nil;
 }
 
-void jet_win_get_transform(float outMat9[9])
-{
-  if(!g_activeWindow) {
-    jet_mat3_identity(outMat9);
-    return;
-  }
-  for(int i = 0; i < 9; i++) {
-    outMat9[i] = g_activeWindow->x_transform[i];
-  }
-}
-void jet_win_set_transform(const float mat9[9])
-{
-  if(!g_activeWindow) {
-    return;
-  }
-  for(int i = 0; i < 9; i++) {
-    g_activeWindow->x_transform[i] = mat9[i];
-  }
-}
-
 float jet_win_get_aspect(void)
 {
   return (g_activeWindow && g_activeWindow->x_aspect > 0.f) ? g_activeWindow->x_aspect : 1.f;
+}
+
+int jet_win_get_depth(void)
+{
+  return g_activeWindow ? g_activeWindow->x_depth : 1;
+}
+void jet_win_set_depth(int on)
+{
+  if(g_activeWindow) {
+    g_activeWindow->x_depth = on ? 1 : 0;
+  }
 }
 
 void jet_win_get_transform3d(float outMat16[16])
@@ -262,6 +254,22 @@ void jet_win_get_light(float outDir3[3], float outColor3[3])
   for(int i = 0; i < 3; i++) {
     outDir3[i] = g_activeWindow->x_lightDir[i];
     outColor3[i] = g_activeWindow->x_lightColor[i];
+  }
+}
+
+void jet_win_get_color(float outRGBA[4])
+{
+  for(int i = 0; i < 4; i++) {
+    outRGBA[i] = g_activeWindow ? g_activeWindow->x_color[i] : 1.f;
+  }
+}
+void jet_win_set_color(const float rgba[4])
+{
+  if(!g_activeWindow) {
+    return;
+  }
+  for(int i = 0; i < 4; i++) {
+    g_activeWindow->x_color[i] = rgba[i];
   }
 }
 
@@ -384,9 +392,12 @@ void jet_win_unregister_head(t_outlet *outlet)
     "  out.uv = verts[vid].uv;\n"
     "  return out;\n"
     "}\n"
+    // tint = the chain's current color (jet_color): modulates the
+    // texture, like Gem's [color] on a textured shape. white = no change.
     "fragment float4 texFragmentMain(TexVertexOut in [[stage_in]],\n"
-    "    texture2d<float> tex [[texture(0)]], sampler s [[sampler(0)]]) {\n"
-    "  return tex.sample(s, in.uv);\n"
+    "    texture2d<float> tex [[texture(0)]], sampler s [[sampler(0)]],\n"
+    "    constant float4 &tint [[buffer(0)]]) {\n"
+    "  return tex.sample(s, in.uv) * tint;\n"
     "}\n"
     // --- 3D: additive, see jet_shared.h's comment on the 3D
     // accessors for the overall design. Uniforms3D's layout must
@@ -394,11 +405,12 @@ void jet_win_unregister_head(t_outlet *outlet)
     // lightColor are float4 (not float3) specifically so there's no
     // float3-padding-rule question to get right on either side at
     // all: float4 is unambiguously 16 bytes, 16-byte aligned, in both
-    // MSL and a plain C++ float[4]. w is unused (xyz only).
+    // MSL and a plain C++ float[4]. w is unused except lightDir.w: 1 = unlit (flat shapes).
     "struct Uniforms3D {\n"
     "  float4x4 model; float4x4 view; float4x4 projection;\n"
     "  float4 lightDir;\n"
     "  float4 lightColor;\n"
+    "  float4 tint;\n"
     "};\n"
     // packed_float3, NOT float3, for a struct crossing the CPU->GPU
     // boundary via a raw byte buffer (setVertexBytes): plain float3
@@ -425,7 +437,8 @@ void jet_win_unregister_head(t_outlet *outlet)
     "    constant Uniforms3D &u [[buffer(1)]]) {\n"
     "  float3 n = normalize(in.normal);\n"
     "  float ndotl = max(dot(n, normalize(u.lightDir.xyz)), 0.0);\n"
-    "  float3 lit = in.color * (0.15 + ndotl * u.lightColor.xyz);\n"
+    "  float3 shade = (u.lightDir.w > 0.5) ? float3(1.0) : (0.15 + ndotl * u.lightColor.xyz);\n"
+    "  float3 lit = in.color * shade;\n"
     "  return float4(lit, 1.0);\n"
     "}\n"
     // packed_float3 here too - see Vertex3D's comment above
@@ -447,7 +460,8 @@ void jet_win_unregister_head(t_outlet *outlet)
     "  float3 n = normalize(in.normal);\n"
     "  float ndotl = max(dot(n, normalize(u.lightDir.xyz)), 0.0);\n"
     "  float4 albedo = tex.sample(s, in.uv);\n"
-    "  float3 lit = albedo.rgb * (0.15 + ndotl * u.lightColor.xyz);\n"
+    "  float3 shade = (u.lightDir.w > 0.5) ? float3(1.0) : (0.15 + ndotl * u.lightColor.xyz);\n"
+    "  float3 lit = albedo.rgb * u.tint.rgb * shade;\n"
     "  return float4(lit, albedo.a);\n"
     "}\n";
 
@@ -506,7 +520,7 @@ void jet_win_unregister_head(t_outlet *outlet)
   }
 
   MTLDepthStencilDescriptor *depthDesc = [[MTLDepthStencilDescriptor alloc] init];
-  depthDesc.depthCompareFunction = MTLCompareFunctionLess;
+  depthDesc.depthCompareFunction = MTLCompareFunctionLessEqual;  // coplanar redraws still pass
   depthDesc.depthWriteEnabled = YES;
   g_depthState = [self.device newDepthStencilStateWithDescriptor:depthDesc];
 
@@ -858,18 +872,15 @@ static void jet_win_lightcolor(t_jet_win *x, t_floatarg r, t_floatarg g, t_float
 // earlier chain can never silently decide how a later one looks.
 static void jet_win_beginChain(t_jet_win *x)
 {
-  float identity2d[9];
-  jet_mat3_identity(identity2d);
-  for(int i = 0; i < 9; i++) {
-    x->x_transform[i] = identity2d[i];
-  }
   jet_mat4_identity(x->x_transform3d);
+  x->x_depth = 1;
+  x->x_color[0] = x->x_color[1] = x->x_color[2] = x->x_color[3] = 1.f;
 
   // a texture one chain bound (or rendered) isn't this chain's input
   x->x_currentTexture = nil;
 
-  // encoder state: back to the 2D default (no depth test, no depth
-  // write); 3D shapes switch it on for themselves when they draw
+  // encoder state: shapes set their own depth state when they draw;
+  // this is just a safe baseline
   if(g_currentEncoder && g_noDepthState) {
     [g_currentEncoder setDepthStencilState:g_noDepthState];
   }
@@ -998,7 +1009,7 @@ static void *jet_win_new(t_symbol *s, int argc, t_atom *argv)
   x->x_currentTexture = nil;
   x->x_currentPixelsW = 0;
   x->x_currentPixelsH = 0;
-  jet_mat3_identity(x->x_transform);
+  x->x_depth = 1;
 
   // 3D defaults: Gem's own default view - camera 4 units back on +Z
   // looking at the origin (right-handed, Y-up) with a 90 degree
@@ -1018,6 +1029,7 @@ static void *jet_win_new(t_symbol *s, int argc, t_atom *argv)
   // default comes from up/front/right of the origin
   x->x_lightDir[0] = 0.4f; x->x_lightDir[1] = 0.8f; x->x_lightDir[2] = 0.4f;
   x->x_lightColor[0] = x->x_lightColor[1] = x->x_lightColor[2] = 1.f;
+  x->x_color[0] = x->x_color[1] = x->x_color[2] = x->x_color[3] = 1.f;
 
   t_symbol *name = gensym("default");
   float fps = 0.f;

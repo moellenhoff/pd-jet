@@ -7,7 +7,7 @@
 #X obj 40 150 jet_head 0;
 #X obj 40 180 jet_video;
 #X obj 40 210 jet_feedback 640 480;
-#X obj 40 240 jet_rectangle 0 0 4.2 3.2 1 1 1;
+#X obj 40 240 jet_rectangle 4.2 3.2;
 #X msg 250 150 decay 0.95;
 #X msg 340 150 decay 0.5;
 #X msg 250 190 rotate 3;

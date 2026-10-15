@@ -56,12 +56,24 @@ eigener Block dazu.
 ## Konventionen
 
 - **Einheiten = Gem-Einheiten.** Das fertige Bild ist 8 Einheiten hoch
-  (y = -4..+4) und 8·Aspekt breit. 2D-Formen (`jet_rectangle`,
-  `jet_triangle`) und die 2D-Transforms arbeiten darin; die 3D-Standard-
-  kamera (z = 4, fov 90) macht die z=0-Ebene ebenfalls 8 Einheiten hoch,
-  sodass 2D und 3D denselben Maßstab haben. `[jet_rectangle 0 0 5.33 4]`
+  (y = -4..+4) und 8·Aspekt breit. Formen (`jet_rectangle`,
+  `jet_triangle`) arbeiten darin; die Standardkamera (z = 4, fov 90)
+  macht die z=0-Ebene 8 Einheiten hoch. `[jet_rectangle 5.33 4]`
   füllt ein 800x600-Fenster wie `[rectangle 5.33 4]` in Gem. Parameter
   von Rechteck/Dreieck sind Halbmaße.
+- **Formen und Inlets nach Gem-Vorbild:** der linke Inlet nimmt die Kette
+  (Bang) und Messages, jeder Parameter hat einen eigenen Inlet danach
+  (`jet_rectangle w h`: Bang | Breite | Höhe; `jet_translateXYZ`:
+  Kette | x | y | z; `jet_color`: Kette | r | g | b; `jet_triangle` und
+  `jet_cube`: Kette | Größe). Parameter-Inlets speichern nur, gezeichnet
+  bzw. angewendet wird beim Bang der Kette (jet_win bangt jeden Frame).
+  Position kommt aus `jet_translateXYZ`, Farbe aus `jet_color`
+  (Kettenzustand, Standard weiß; bei Textur wirkt sie als Tönung),
+  Tiefentest aus `jet_depth` (Standard an), der Zustand eines Zweigs wird
+  mit `jet_separator` gekapselt. Verzweigen immer mit `[t b b]`.
+- **Alle Formen sind echte 3D-Geometrie** (Rechteck/Dreieck ungelit, Würfel
+  gelit) und laufen durch Kamera und ein einziges 4x4-Modelltransform.
+  Der frühere 2D-Transform ist entfernt.
 - **Zustandsbereiche** (Kette / Frame / Objekt) und die Regel, dass jedes
   zeichnende Objekt seinen Encoder-Zustand selbst setzt, stehen im Kopf
   von `src/jet_shared.h`.

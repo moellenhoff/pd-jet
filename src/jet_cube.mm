@@ -7,9 +7,13 @@
  * jet_perlin/jet_feedback's render-to-texture pattern) - it's a
  * shape, not a texture source.
  *
+ * [jet_cube <size>]  edge length, default 1. Inlets, Gem-style: left
+ * = the chain (bang, plus "size s"), right = size (stores only);
+ * drawing happens on the bang. Color comes from the chain (jet_color).
+ *
  * Texture-aware exactly like jet_rectangle: if jet_texture has
- * bound a texture this frame, draws textured (still lit); otherwise
- * flat per-vertex color. 24 unique corners (4 per face, so each face
+ * bound a texture this frame, draws textured (still lit, tinted by
+ * the chain color); otherwise flat in the chain color. 24 unique corners (4 per face, so each face
  * gets its own flat normal - a real cube has hard edges, not smoothed
  * ones) expanded to 36 non-indexed triangle vertices, same
  * no-index-buffer approach the 2D shapes already use.
@@ -25,25 +29,14 @@
 
 static t_class *jet_cube_class;
 
-// must match the MSL Vertex3D/Vertex3DTex/Uniforms3D structs in
-// jet_win.mm's setupPipelines byte-for-byte - these plain float[3]
-// arrays are already tightly packed with no gaps, matching the MSL
-// side's packed_float3 (NOT plain float3, which is 16-byte-aligned
-// per field and would silently misalign every vertex after the
-// first - see jet_win.mm's comment on Vertex3D for the bug this was)
-typedef struct { float pos[3]; float normal[3]; float color[3]; } Vertex3D;
-typedef struct { float pos[3]; float normal[3]; float uv[2]; }    Vertex3DTex;
-typedef struct {
-  float model[16], view[16], projection[16];
-  float lightDir[4];    // w unused - see jet_win.mm's setupPipelines for why float4
-  float lightColor[4];  // w unused
-} Uniforms3D;
+typedef JetVertex3D Vertex3D;
+typedef JetVertex3DTex Vertex3DTex;
+typedef JetUniforms3D Uniforms3D;
 
 typedef struct _jet_cube {
   t_object x_obj;
   t_outlet *x_outlet;
-  float    x_size;  // full edge length
-  float    x_r, x_g, x_b;
+  t_float  x_size;  // full edge length
 } t_jet_cube;
 
 // one entry per face: outward normal, then 4 corners going around
@@ -76,19 +69,13 @@ static const CubeFace kCubeFaces[6] = {
 static void jet_cube_bang(t_jet_cube *x)
 {
   id<MTLRenderCommandEncoder> enc = jet_win_current_encoder();
-  id<MTLDepthStencilState> depthState = jet_win_depth_state();
-  if(!enc || !depthState) {
+  if(!enc) {
     return;  // no jet_win mid-frame right now - just skip quietly
   }
 
   Uniforms3D u;
-  jet_win_get_transform3d(u.model);
-  jet_win_get_view(u.view);
-  jet_win_get_projection(u.projection);
-  jet_win_get_light(u.lightDir, u.lightColor);
-  u.lightDir[3] = u.lightColor[3] = 0.f;
-
-  [enc setDepthStencilState:depthState];
+  jet_fill_uniforms3d(&u, false);  // solids are lit by the window light
+  jet_win_apply_depth(enc);
 
   id<MTLTexture> tex = jet_win_current_texture();
   const float s = x->x_size;
@@ -137,7 +124,7 @@ static void jet_cube_bang(t_jet_cube *x)
         v.pos[1] = face.c[c][1] * s;
         v.pos[2] = face.c[c][2] * s;
         v.normal[0] = face.n[0]; v.normal[1] = face.n[1]; v.normal[2] = face.n[2];
-        v.color[0] = x->x_r; v.color[1] = x->x_g; v.color[2] = x->x_b;
+        v.color[0] = u.tint[0]; v.color[1] = u.tint[1]; v.color[2] = u.tint[2];
       }
     }
     [enc setRenderPipelineState:pipeline];
@@ -154,12 +141,6 @@ static void jet_cube_size(t_jet_cube *x, t_floatarg s)
 {
   x->x_size = s;
 }
-static void jet_cube_color(t_jet_cube *x, t_floatarg r, t_floatarg g, t_floatarg b)
-{
-  x->x_r = r;
-  x->x_g = g;
-  x->x_b = b;
-}
 
 static void *jet_cube_new(t_symbol *s, int argc, t_atom *argv)
 {
@@ -168,9 +149,7 @@ static void *jet_cube_new(t_symbol *s, int argc, t_atom *argv)
 
   x->x_outlet = outlet_new(&x->x_obj, &s_bang);
   x->x_size = (argc >= 1) ? atom_getfloatarg(0, argc, argv) : 1.f;
-  x->x_r = (argc >= 2) ? atom_getfloatarg(1, argc, argv) : 0.75f;
-  x->x_g = (argc >= 3) ? atom_getfloatarg(2, argc, argv) : 0.75f;
-  x->x_b = (argc >= 4) ? atom_getfloatarg(3, argc, argv) : 0.8f;
+  floatinlet_new(&x->x_obj, &x->x_size);
 
   return (void *)x;
 }
@@ -184,6 +163,4 @@ extern "C" void jet_cube_setup(void)
   class_addbang(jet_cube_class, jet_cube_bang);
   class_addmethod(jet_cube_class, (t_method)jet_cube_size,
                   gensym("size"), A_FLOAT, 0);
-  class_addmethod(jet_cube_class, (t_method)jet_cube_color,
-                  gensym("color"), A_FLOAT, A_FLOAT, A_FLOAT, 0);
 }

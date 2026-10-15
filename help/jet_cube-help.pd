@@ -10,7 +10,7 @@
 #X obj 40 270 jet_rotateXYZ 0 0 0;
 #X obj 40 300 jet_translateXYZ 0 0 0;
 #X obj 40 330 jet_scaleXYZ 1 1 1;
-#X obj 40 360 jet_cube 2 0.8 0.5 0.3;
+#X obj 40 390 jet_cube 2;
 #X msg 300 150 camera 0 0 4;
 #X msg 420 150 camera 4 2 8;
 #X msg 300 190 fov 90;
@@ -26,21 +26,8 @@
 #X text 300 270 rotateXYZ (tilt/reset);
 #X text 300 300 translateXYZ (shift right/reset);
 #X text 300 330 scaleXYZ (bigger/reset);
-#X text 40 400 jet_rotateXYZ/translateXYZ/scaleXYZ are like Gem's
-own - one object each \, X/Y/Z all at once \, instead of separate
-2D/3D objects with a single axis or no Z at all. every one of them
-updates BOTH the 2D 3x3 transform (jet_triangle/jet_rectangle)
-AND the 3D 4x4 one (jet_cube) on every bang - 2D only ever sees
-the X/Y (or \, for rotate\, just Z) components\, since that's all
-that has meaning on a flat plane - so the exact same chain of transform
-objects works whether a 2D or 3D shape follows them\, no separate
-objects needed depending on which. jet_win owns a camera (position/lookat/fov)
-and light \, computed once per FRAME rather than per chain. the
-counter here (f/+2/set) drives the Y rotation directly off the render
-tick - no metro needed - using the standard "set the value \, THEN
-bang" trigger-ordered Pd idiom \, since a message alone only updates
-stored state\, not the transform itself until the next bang reads
-it. try the transform/camera/fov/light messages while it spins.;
+#X text 40 430 jet_rotateXYZ / jet_translateXYZ / jet_scaleXYZ are like Gem's own: one object each \, X/Y/Z all at once. The left inlet takes the chain (bang) and the "set x y z" message \, the three inlets after it are X \, Y and Z - they only store \, and the next bang applies them. Each one multiplies onto the chain's model transform \, which jet_win resets to identity before every chain \, so nothing leaks from one chain into the next. The counter here (f / + 2 / set) drives the Y rotation straight off the render tick - no metro needed - using the usual "set the value \, THEN bang" idiom (the [t b b] fires its right outlet first). Try the transform / camera / fov / light messages while it spins. jet_win owns the camera (position / lookat / fov) and the light \, computed once per frame. The colour comes from jet_color \; a cube is lit by the window light \, flat shapes like jet_rectangle are not.;
+#X obj 40 360 jet_color 0.8 0.5 0.3;
 #X connect 1 0 0 0;
 #X connect 2 0 0 0;
 #X connect 3 0 4 0;
@@ -52,7 +39,6 @@ it. try the transform/camera/fov/light messages while it spins.;
 #X connect 4 0 8 0;
 #X connect 8 0 9 0;
 #X connect 9 0 10 0;
-#X connect 10 0 11 0;
 #X connect 12 0 0 0;
 #X connect 13 0 0 0;
 #X connect 14 0 0 0;
@@ -65,3 +51,5 @@ it. try the transform/camera/fov/light messages while it spins.;
 #X connect 21 0 9 0;
 #X connect 22 0 10 0;
 #X connect 23 0 10 0;
+#X connect 10 0 28 0;
+#X connect 28 0 11 0;

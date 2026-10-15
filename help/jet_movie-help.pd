@@ -5,7 +5,7 @@
 #X obj 40 150 jet_head 0;
 #X obj 40 180 jet_movie ./anim-1.mov;
 #X obj 40 210 jet_texture;
-#X obj 40 240 jet_rectangle 0 0 3.2 3.2 1 1 1;
+#X obj 40 240 jet_rectangle 3.2 3.2;
 #X msg 250 150 open ./anim-1.mov;
 #X msg 250 190 loop 0;
 #X msg 320 190 loop 1;

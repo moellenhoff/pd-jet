@@ -28,8 +28,9 @@
  * State has three scopes - know which one a piece of state lives in:
  *
  *  - CHAIN-scoped (reset by jet_win before every jet_head bang, see
- *    jet_win_beginChain): the 2D and 3D model transforms, the current
- *    texture, and the encoder's depth-stencil state. Nothing a chain
+ *    jet_win_beginChain): the model transform, the current color,
+ *    the depth test on/off flag and the current texture. jet_separator saves and restores all of these around its
+ *    own branch. Nothing a chain
  *    does to these can reach the next chain.
  *  - FRAME-scoped (set once per frame by jet_win): camera view/
  *    projection, the light, the aspect ratio. Chain objects only read.
@@ -43,7 +44,7 @@
  * Rule for anything that draws: set every piece of encoder state you
  * depend on explicitly (pipeline, depth-stencil, textures, buffers)
  * instead of assuming what an earlier draw left behind - a chain can
- * contain 2D and 3D shapes in any order.
+ * contain shapes with and without depth testing in any order.
  * ------------------------------------------------------------------
  */
 #ifndef _INCLUDE__JET_SHARED_H_
@@ -95,45 +96,23 @@ void jet_win_register_head(t_symbol *windowName, void *x, t_outlet *outlet,
                              int priority);
 void jet_win_unregister_head(t_outlet *outlet);
 
-// the current 2D affine transform (row-major 3x3, homogeneous
-// coords), like Gem's modelview matrix - jet_win resets it to
-// identity right before banging each jet_head, so it only
-// accumulates within a single chain, never leaks into the next one.
-// jet_translateXYZ/jet_rotateXYZ/jet_scaleXYZ multiply their own
-// operation onto it; jet_triangle/jet_rectangle apply it (on the
-// CPU, before building their vertex buffers) to their own positions.
-void jet_win_get_transform(float outMat9[9]);
-void jet_win_set_transform(const float mat9[9]);
-
-// --- 2D units: Gem units. The window is 8 units tall (y runs -4..+4)
-// and as wide as its aspect ratio makes it (x runs -4*aspect..
-// +4*aspect), so on an 800x600 window [jet_rectangle 0 0 5.33 4 ...]
-// fills the whole picture, exactly as [rectangle 5.33 4] does in Gem.
-// 2D shape objects work in these units; the 2D transform above is in
-// them too. The default 3D camera (z=4, fov 90) is chosen so the z=0
-// plane is also 8 units tall - 2D and 3D share one scale.
+// --- Units: Gem units. All shapes are real 3D geometry drawn through
+// the camera. The default camera (z=4, fov 90) makes the z=0 plane
+// 8 units tall (y runs -4..+4) and 8*aspect wide, so on an 800x600
+// window [jet_rectangle 5.33 4] fills the whole picture, exactly as
+// [rectangle 5.33 4] does in Gem - and a shape moved back in Z gets
+// smaller by perspective, like in Gem.
 //
 // width/height of the window's actual drawable (not the last "dimen"
-// message - the user can drag-resize it), so shapes stay undistorted.
+// message - the user can drag-resize it).
 float jet_win_get_aspect(void);
 
-static const float JET_UNITS_HALF_HEIGHT = 4.f;
-
-// converts a point in 2D Gem units (after the 2D transform) to the
-// normalized device coordinates the 2D pipelines expect
-static inline void jet_units_to_ndc(float x, float y, float *nx, float *ny)
-{
-  *nx = x / (JET_UNITS_HALF_HEIGHT * jet_win_get_aspect());
-  *ny = y / JET_UNITS_HALF_HEIGHT;
-}
-
-// --- 3D: additive to everything above, existing 2D objects/pipelines
-// are completely untouched. Right-handed, Y-up world space, column-
+// --- 3D: Right-handed, Y-up world space, column-
 // major 4x4 matrices (Metal's own native convention, so these upload
-// straight into an MSL float4x4 with no transpose). Model transform
-// works exactly like the 2D one: jet_win resets it to identity
-// before each jet_head chain, jet_translate3d/rotate3d/scale3d
-// multiply their own op onto it, 3D shape objects (jet_cube, later
+// straight into an MSL float4x4 with no transpose). Model transform:
+// jet_win resets it to identity before each jet_head chain,
+// jet_translateXYZ/rotateXYZ/scaleXYZ multiply their own op onto it,
+// shape objects (jet_rectangle, jet_triangle, jet_cube, later
 // jet_obj) read it once per vertex-buffer build. View/projection
 // are NOT per-chain - jet_win computes them once per FRAME from its
 // own camera state ("camera"/"lookat"/"fov" messages) and shape
@@ -148,6 +127,21 @@ void jet_win_get_projection(float outMat16[16]);
 // max(dot(normal, lightDir), 0) directly, no extra negation).
 void jet_win_get_light(float outDir3[3], float outColor3[3]);
 
+// the chain's current color (RGBA, 0..1), set by jet_color and read by
+// every shape: it is the flat color of a shape without a texture and a
+// multiplicative tint on one with a texture, like Gem's [color].
+// Chain-scoped: jet_win resets it to opaque white before every chain
+// (jet_separator saves/restores it). alpha is carried but unused until
+// blending exists.
+void jet_win_get_color(float outRGBA[4]);
+void jet_win_set_color(const float rgba[4]);
+
+// depth testing on/off for the chain's shapes, set by jet_depth.
+// Chain-scoped, ON by default (like Gem). Shapes call
+// jet_win_apply_depth() right before drawing.
+int  jet_win_get_depth(void);
+void jet_win_set_depth(int on);
+
 // the two 3D pipelines (flat per-vertex color / texture-sampled),
 // mirroring jet_win_flat_pipeline/textured_pipeline above but with
 // depth testing and a position+normal(+uv) vertex layout - see
@@ -156,16 +150,10 @@ id<MTLRenderPipelineState> jet_win_flat3d_pipeline(void);
 id<MTLRenderPipelineState> jet_win_textured3d_pipeline(void);
 id<MTLDepthStencilState>   jet_win_depth_state(void);
 
-// depth-stencil state that always passes and never writes - the 2D
-// pipelines share ONE on-screen encoder with any 3D content this
-// frame (see the file header comment on multi-chain rendering), and
-// setDepthStencilState: persists on an encoder across draw calls
-// until changed again. Without explicitly setting THIS before every
-// 2D draw, a 2D shape drawn after a 3D one earlier in the same frame
-// would silently inherit the 3D depth test and could vanish behind
-// it. jet_triangle/jet_rectangle set this immediately before
-// their own draw calls; 3D shape objects use jet_win_depth_state()
-// above instead.
+// depth-stencil state that always passes and never writes (what
+// jet_depth 0 selects). The shapes share ONE on-screen encoder this
+// frame and setDepthStencilState: persists across draw calls, so
+// every shape sets its state explicitly via jet_win_apply_depth().
 id<MTLDepthStencilState>   jet_win_no_depth_state(void);
 
 #ifdef __cplusplus
@@ -292,37 +280,39 @@ static inline void jet_mat4_lookAt(float eyeX, float eyeY, float eyeZ,
   m[3] = 0.f; m[7] = 0.f; m[11] = 0.f; m[15] = 1.f;
 }
 
-// small 3x3 (row-major) matrix helpers for the 2D transform above -
-// header-only, no cross-bundle symbol needed for plain math.
-static inline void jet_mat3_identity(float m[9])
+// --- what every shape needs to draw through the 3D pipelines: the
+// vertex layouts and uniform block (must match the MSL structs in
+// jet_win.mm byte-for-byte - plain float arrays are tightly packed,
+// matching the MSL side's packed_float2/3), plus one call that fills
+// the uniforms from the window's current chain state.
+typedef struct { float pos[3]; float normal[3]; float color[3]; } JetVertex3D;
+typedef struct { float pos[3]; float normal[3]; float uv[2]; }    JetVertex3DTex;
+typedef struct {
+  float model[16], view[16], projection[16];
+  float lightDir[4];    // w: 1 = unlit (flat shapes), 0 = lit by the window light
+  float lightColor[4];  // w unused
+  float tint[4];        // chain color (jet_color); modulates the texture
+} JetUniforms3D;
+
+static inline void jet_fill_uniforms3d(JetUniforms3D *u, bool unlit)
 {
-  m[0] = 1; m[1] = 0; m[2] = 0;
-  m[3] = 0; m[4] = 1; m[5] = 0;
-  m[6] = 0; m[7] = 0; m[8] = 1;
+  jet_win_get_transform3d(u->model);
+  jet_win_get_view(u->view);
+  jet_win_get_projection(u->projection);
+  jet_win_get_light(u->lightDir, u->lightColor);
+  u->lightDir[3] = unlit ? 1.f : 0.f;
+  u->lightColor[3] = 0.f;
+  jet_win_get_color(u->tint);
 }
 
-// out = a * b (row-major); safe to alias out with a or b
-static inline void jet_mat3_mul(const float a[9], const float b[9], float out[9])
+// sets the encoder's depth-stencil state from the chain's depth flag
+static inline void jet_win_apply_depth(id<MTLRenderCommandEncoder> enc)
 {
-  float r[9];
-  for(int row = 0; row < 3; row++) {
-    for(int col = 0; col < 3; col++) {
-      r[row * 3 + col] = a[row * 3 + 0] * b[0 * 3 + col] +
-                         a[row * 3 + 1] * b[1 * 3 + col] +
-                         a[row * 3 + 2] * b[2 * 3 + col];
-    }
+  id<MTLDepthStencilState> st = jet_win_get_depth() ? jet_win_depth_state()
+                                                    : jet_win_no_depth_state();
+  if(st) {
+    [enc setDepthStencilState:st];
   }
-  for(int i = 0; i < 9; i++) {
-    out[i] = r[i];
-  }
-}
-
-// applies m to the 2D point (x,y) (homogeneous z=1)
-static inline void jet_mat3_apply(const float m[9], float x, float y,
-                                    float *outX, float *outY)
-{
-  *outX = m[0] * x + m[1] * y + m[2];
-  *outY = m[3] * x + m[4] * y + m[5];
 }
 
 #endif  // for header file

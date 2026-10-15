@@ -1,4 +1,4 @@
-#N canvas 100 100 700 640 10;
+#N canvas 100 100 700 760 10;
 #X obj 40 40 jet_win;
 #X msg 40 100 create;
 #X msg 130 100 destroy;
@@ -6,55 +6,36 @@
 #X obj 40 180 jet_rotateXYZ 0 0 0;
 #X obj 40 210 jet_translateXYZ 0 0 0;
 #X obj 40 240 jet_scaleXYZ 1 1 1;
-#X obj 40 270 jet_rectangle -2 0 1.2 1.2 1 0.6 0.3;
-#X obj 200 270 jet_cube 2 0.8 0.5 0.3;
+#X obj 40 390 jet_rectangle 1.2 1.2;
+#X obj 220 360 jet_cube 2;
 #X msg 350 150 set 0 0 45;
 #X msg 460 150 set 45 0 0;
 #X msg 570 150 set 0 45 0;
 #X msg 350 180 set 0 0 0;
-#X text 350 200 rotateXYZ: Z (both react) \, X \, Y (cube only) \, reset;
+#X text 350 200 rotateXYZ: tilt \, turn \, reset;
 #X msg 350 240 set 1 1 0;
 #X msg 460 240 set 0 0 0;
 #X text 350 260 translateXYZ: shift \, reset;
 #X msg 350 290 set 1.6 1.6 1.6;
 #X msg 460 290 set 1 1 1;
 #X text 350 310 scaleXYZ: bigger \, reset;
-#X text 40 320 jet_rotateXYZ/translateXYZ/scaleXYZ (like Gem's
-own) each update BOTH transforms every bang - the 2D 3x3 one (jet_triangle/jet_rectangle
-- the square on the left here) and the 3D 4x4 one (jet_cube - on
-the right). the SAME chain drives both\, but they don't see the
-same thing out of it: 2D only has meaning in a flat plane\, so it
-only ever picks up the Z rotation and the X/Y translate/scale - X/Y
-rotation and Z translate/scale are 3D-only and the square simply
-ignores them. try "set 45 0 0" or "set 0 45 0" on rotateXYZ - only
-the cube spins \; then "set 0 0 45" - now the square rotates too.
-every jet_head dispatch resets both transforms to identity first
-\, so this chain's accumulated state never leaks into another chain
-\, and doesn't carry over between bangs either - that's why every
-message here is "set the value \, then bang the chain" rather than
-something that keeps accumulating on repeated bangs. jet_head only
-bangs automatically while jet_win is rendering (after "create")
-- these test messages update the stored values right away regardless
-\, but you won't see the change until the next render tick bangs
-the chain.;
+#X text 40 440 jet_rotateXYZ / jet_translateXYZ / jet_scaleXYZ multiply onto the chain's model transform. Shapes are real 3D geometry \, so every axis works on every shape: the rectangle on the left and the cube on the right both follow X \, Y and Z. Try "set 45 0 0" and "set 0 45 0" on rotateXYZ (the rectangle tips over in perspective) \, "set 0 0 45" turns it in the plane. jet_win resets the transform before every chain \, so nothing carries over - that's why every message here is "set the value \, then bang the chain". The render tick bangs the chain every frame (after "create") \, so a change shows up in the next picture. The two shapes sit in separate branches of a [t b b] \, each wrapped in a jet_separator \, so the translate and colour of one branch don't touch the other.;
 #X floatatom 700 150 5 0 0 0 - - -;
 #X floatatom 700 190 5 0 0 0 - - -;
-#X text 660 130 X (hot);
-#X text 660 170 Z (hot too);
-#X text 40 460 all three transform objects also have 3 Gem-style
-inlets now - X/Y/Z are ALL hot (like real Gem's rotateXYZ/translateXYZ/scaleXYZ
-\, unlike the more common Pd convention of only the leftmost inlet
-being hot). a float to any one of them immediately recomputes and
-forwards \, like a bang \, using whatever the OTHER two axes are
-currently stored as. drag either number box above - the cube reacts
-right away on every drag \, from either one.;
+#X text 660 130 X (inlet 1);
+#X text 660 170 Z (inlet 3);
+#X text 40 590 Inlets: the left one takes the chain (bang) and "set x y z" \, the three after it are X \, Y and Z and only store - like in Gem. Drag the two number boxes above: they feed rotateXYZ's X inlet (1) and Z inlet (3). Nothing is recomputed until the next bang arrives \, which on the render tick is every frame.;
+#X obj 40 270 t b b;
+#X obj 40 300 jet_separator;
+#X obj 40 330 jet_translateXYZ -2 0 0;
+#X obj 40 360 jet_color 1 0.6 0.3;
+#X obj 220 300 jet_separator;
+#X obj 220 330 jet_color 0.8 0.5 0.3;
 #X connect 1 0 0 0;
 #X connect 2 0 0 0;
 #X connect 3 0 4 0;
 #X connect 4 0 5 0;
 #X connect 5 0 6 0;
-#X connect 6 0 7 0;
-#X connect 6 0 8 0;
 #X connect 9 0 4 0;
 #X connect 10 0 4 0;
 #X connect 11 0 4 0;
@@ -63,5 +44,13 @@ right away on every drag \, from either one.;
 #X connect 15 0 5 0;
 #X connect 17 0 6 0;
 #X connect 18 0 6 0;
-#X connect 21 0 4 0;
-#X connect 22 0 4 2;
+#X connect 6 0 26 0;
+#X connect 26 1 27 0;
+#X connect 27 0 28 0;
+#X connect 28 0 29 0;
+#X connect 29 0 7 0;
+#X connect 26 0 30 0;
+#X connect 30 0 31 0;
+#X connect 31 0 8 0;
+#X connect 21 0 4 1;
+#X connect 22 0 4 3;

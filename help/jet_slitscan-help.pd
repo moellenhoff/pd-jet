@@ -9,14 +9,14 @@
 #X obj 300 150 jet_head 0;
 #X obj 300 180 jet_perlin 256 256;
 #X obj 40 220 jet_slitscan 30;
-#X obj 40 250 jet_rectangle 0 0 4.2 3.2 1 1 1;
+#X obj 40 250 jet_rectangle 4.2 3.2;
 #X msg 250 220 delay 10;
 #X msg 340 220 delay 60;
 #X msg 250 260 freeze 1;
 #X msg 340 260 freeze 0;
 #X text 40 300 jet_slitscan: per-PIXEL delay \, picked by the red
 channel of a second "delay map" texture (0=now \, 255=max delay)
-- here jet_perlin \, for an organic animated result; try any gradient/ramp
+- here jet_perlin \, for an organic animated result \; try any gradient/ramp
 image instead for a classic scanline slit-scan look. the two jet_head
 branches run in priority order (0 before 1) \, so the delay-map chain
 finishes and lands in jet_slitscan's RIGHT inlet before the main
