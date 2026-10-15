@@ -42,7 +42,8 @@ eigener Block dazu.
   `jet_history(t, p, uv, framesAgo)`) trägt `shaders/slitscan.metal` und
   `slitscan_line.metal`; die früheren Objekte `jet_slitscan` und
   `jet_slitscan_line` sind entfernt.
-  Offen: mehrere Durchläufe pro Objekt, `jet_compute`
+  Offen: Verschmelzen von Punktoperationen, mehrere Durchläufe pro Objekt
+  (z. B. getrennter Blur), weitere Bausteine (edge, displace, mirror, tile), `jet_compute`
   (Compute-Shader), Slider/Min-Max-Bereiche für Parameter
 - Weitere Primitive, Material-/Lichtmodell erweitern
 - Linux/Windows (Vulkan-Backend oder WebGPU), erst wenn der Mac-Kern
@@ -92,6 +93,21 @@ eigener Block dazu.
   pro Fenster und bleiben bis zur nächsten Veröffentlichung; läuft der
   Erzeuger später als der Verbraucher, kommt das Bild des Vorframes
   (Priorität der `jet_head` steuert das).
+- **Effekt-Bausteine** (`jet_level`, `jet_hsv`, `jet_blur`, `jet_mix`,
+  `jet_uvtransform`, `jet_threshold`): dünne Hüllen um dasselbe System wie
+  `jet_shader` (`src/jet_fx_object.h`); der Shader jedes Bausteins liegt in
+  `fx/<name>.metal` und wird beim Bauen eingebettet (`tools/embed_fx.py`).
+  Creation-Argumente: Zahlen füllen die Parameter der Reihe nach, Symbole
+  benennen die zusätzlichen Textur-Eingänge. Nach der Kette darunter
+  stellen sie die aktuelle Textur wieder her (wie ein Separator).
+- **Texturpool** (`jet_win_pool_acquire/release`): Ausgaben der Effekte
+  kommen aus einem gemeinsamen Pool; eine freigegebene Textur wird erst
+  wiederverwendet, wenn sie weder von einem aufgezeichneten Draw dieses
+  Frames noch von einem `jet_share`-Namen gebraucht wird; ungenutzte werden
+  nach ~300 Frames freigegeben. Innerhalb einer langen Kette hält jeder
+  Knoten seine Textur, bis alles darunter durchgelaufen ist (Pd liefert
+  keine Information über spätere Leser) - das spart erst die spätere
+  Verschmelzung benachbarter Punktoperationen zu einem Durchlauf.
 - **Alpha** kommt aus `jet_color r g b a`; Texturen-Alpha wird ignoriert.
 - **Zustandsbereiche** (Kette / Frame / Objekt) stehen im Kopf von
   `src/jet_shared.h`.

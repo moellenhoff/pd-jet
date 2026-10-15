@@ -100,6 +100,17 @@ id<MTLTexture> jet_win_current_texture(void);
 void jet_win_publish_texture(t_symbol *name, id<MTLTexture> tex);
 id<MTLTexture> jet_win_named_texture(t_symbol *name);
 
+// TEXTURE POOL: scratch render targets (RGBA8, render+sample) for effects
+// whose output only has to live for as long as the chain below them runs.
+// Acquire one, render into it, bang the rest of the chain, release it.
+// A released texture can be handed out again at once - except while a
+// recorded draw of this frame still samples it or a jet_share name still
+// points to it; the pool keeps track of that itself (see jet_win.mm).
+// Unused textures are freed after a few hundred idle frames. Everything
+// that is not a pooled texture is simply ignored by the pin logic.
+id<MTLTexture> jet_win_pool_acquire(int w, int h);
+void jet_win_pool_release(id<MTLTexture> tex);
+
 // jet_head calls these in its constructor/destructor to join/leave
 // a specific jet_win's set of chains that get banged once per
 // frame, in ascending priority order (same convention as Gem's

@@ -1,0 +1,18 @@
+#N canvas 100 100 780 670 10;
+#X obj 40 40 jet_win;
+#X msg 40 80 create;
+#X msg 130 80 destroy;
+#X obj 40 130 jet_head 0;
+#X obj 40 165 jet_perlin 256 256;
+#X obj 40 200 jet_blur;
+#X obj 40 235 jet_rectangle 3.2 2.4;
+#X floatatom 40 290 5 0 40 0 - - -;
+#X text 40 315 radius (px);
+#X text 40 390 [jet_blur] softens the picture. radius is in pixels of the output (0 = unchanged). It is a single-pass blur that samples a spiral of 32 points: cheap \, and good for small and medium radii. Very large radii get grainy - for those \, blur a smaller texture (send "resolution" to an earlier effect) and let the rectangle scale it up.;
+#X text 40 510 Creation arguments fill the parameters in order: [jet_blur 6]. Like every jet effect it takes the chain's current texture and hands the result on as the new current texture \; the output has the size of the input (send "resolution w h" to change it). The parameter inlets only store - the next bang from the chain uses them - and the same values can be sent to the left inlet by name \, "info" lists them. After the chain below it has run \, the block puts the texture back the way it found it \, so it acts like a separator for textures.;
+#X connect 1 0 0 0;
+#X connect 2 0 0 0;
+#X connect 3 0 4 0;
+#X connect 4 0 5 0;
+#X connect 5 0 6 0;
+#X connect 7 0 5 1;

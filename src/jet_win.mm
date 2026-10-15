@@ -138,6 +138,7 @@ typedef struct _jet_win {
   int         x_frameActive;
   std::vector<RecordedDraw>   x_draws;
   std::vector<unsigned char>  x_arena;
+  std::vector<id<MTLTexture> > x_framePins;  // pooled textures sampled by this frame's draws
 
   // named textures (jet_share/jet_use), see jet_shared.h. A pointer
   // because std::map isn't valid when zero-filled like the vectors are;
@@ -176,6 +177,10 @@ static std::map<t_symbol *, t_jet_win *> g_windowsByName;
 // banging its own heads and clears it right after.
 static t_jet_win *g_activeWindow = nullptr;
 
+// texture pool pins, defined further down (see "texture pool")
+static void jet_pool_pin(id<MTLTexture> tex);
+static void jet_pool_unpin(id<MTLTexture> tex);
+
 void jet_win_publish_texture(t_symbol *name, id<MTLTexture> tex)
 {
   if(!g_activeWindow || !g_activeWindow->x_named || !name) {
@@ -189,10 +194,90 @@ void jet_win_publish_texture(t_symbol *name, id<MTLTexture> tex)
   }
   if(tex) {
     m[name] = [tex retain];
+    jet_pool_pin(tex);
   } else {
     m.erase(name);
   }
+  if(old) jet_pool_unpin(old);
   [old release];
+}
+
+// ---------------------------------------------------------------
+// texture pool (see jet_shared.h). A texture is reusable when it is
+// released by its producer AND not pinned. Pins come from recorded
+// draws (until the end of the frame) and from published names (until
+// replaced). Everything runs on the Pd thread, so no locking.
+// ---------------------------------------------------------------
+struct PoolEntry {
+  id<MTLTexture> tex;
+  int  w, h;
+  bool inUse;
+  int  pins;
+  long lastUsed;
+};
+static std::vector<PoolEntry> g_pool;
+static long g_poolFrame = 0;
+
+static PoolEntry *jet_pool_find(id<MTLTexture> tex)
+{
+  for(PoolEntry &e : g_pool) {
+    if(e.tex == tex) return &e;
+  }
+  return nullptr;
+}
+
+id<MTLTexture> jet_win_pool_acquire(int w, int h)
+{
+  if(!g_device || w < 1 || h < 1) return nil;
+  for(PoolEntry &e : g_pool) {
+    if(!e.inUse && e.pins == 0 && e.w == w && e.h == h) {
+      e.inUse = true;
+      e.lastUsed = g_poolFrame;
+      return e.tex;
+    }
+  }
+  MTLTextureDescriptor *desc =
+    [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm
+                                                        width:w height:h mipmapped:NO];
+  desc.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;
+  desc.storageMode = MTLStorageModePrivate;
+  id<MTLTexture> tex = [g_device newTextureWithDescriptor:desc];  // +1, owned by the pool
+  if(!tex) return nil;
+  g_pool.push_back({ tex, w, h, true, 0, g_poolFrame });
+  return tex;
+}
+
+void jet_win_pool_release(id<MTLTexture> tex)
+{
+  PoolEntry *e = jet_pool_find(tex);
+  if(e) e->inUse = false;
+}
+
+static void jet_pool_pin(id<MTLTexture> tex)
+{
+  PoolEntry *e = jet_pool_find(tex);
+  if(e) e->pins++;
+}
+
+static void jet_pool_unpin(id<MTLTexture> tex)
+{
+  PoolEntry *e = jet_pool_find(tex);
+  if(e && e->pins > 0) e->pins--;
+}
+
+// once per window frame: free textures nobody has wanted for a while
+static void jet_pool_endFrame(void)
+{
+  g_poolFrame++;
+  for(size_t i = 0; i < g_pool.size(); ) {
+    PoolEntry &e = g_pool[i];
+    if(!e.inUse && e.pins == 0 && g_poolFrame - e.lastUsed > 300) {
+      [e.tex release];
+      g_pool.erase(g_pool.begin() + i);
+    } else {
+      i++;
+    }
+  }
 }
 
 id<MTLTexture> jet_win_named_texture(t_symbol *name)
@@ -358,6 +443,12 @@ extern "C" int jet_win_submit_draw(const JetDrawDesc *d)
     return 0;
   }
   r.texture = d->texture;
+  if(d->texture) {
+    // the draw runs at the end of the frame - keep a pooled texture's
+    // content until then
+    jet_pool_pin(d->texture);
+    w->x_framePins.push_back(d->texture);
+  }
   r.uniforms = d->uniforms;
   r.translucent = d->uniforms.tint[3] < 0.999f;
   if(!w->x_depth) {
@@ -1042,6 +1133,9 @@ static void jet_win_tick(t_jet_win *x)
   }
   x->x_frameActive = 0;
   [x->x_view renderDraws:&x->x_draws arena:&x->x_arena];
+  for(id<MTLTexture> t : x->x_framePins) jet_pool_unpin(t);
+  x->x_framePins.clear();
+  jet_pool_endFrame();
   x->x_currentTexture = nil;  // texture binding only lasts one frame
   g_activeWindow = nullptr;
 
@@ -1155,12 +1249,14 @@ static void jet_win_free(t_jet_win *x)
   clock_free(x->x_clock);
   delete x->x_title;
   for(auto &kv : *x->x_named) {
+    jet_pool_unpin(kv.second);
     [kv.second release];
   }
   delete x->x_named;
   x->x_named = nullptr;
   std::vector<RecordedDraw>().swap(x->x_draws);
   std::vector<unsigned char>().swap(x->x_arena);
+  std::vector<id<MTLTexture> >().swap(x->x_framePins);
 
   auto it = g_windowsByName.find(x->x_name);
   if(it != g_windowsByName.end() && it->second == x) {

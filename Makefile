@@ -20,7 +20,7 @@ MACOSX_VERSION_MIN = 11.0
 CXX      = clang++
 CXXFLAGS = -std=c++14 -O2 -fPIC -Wall -Wno-unused-parameter \
            -arch $(ARCH) -mmacosx-version-min=$(MACOSX_VERSION_MIN)
-INCLUDES = -I$(PD_INCLUDE)
+INCLUDES = -I$(PD_INCLUDE) -I$(BUILD_DIR)
 
 LDFLAGS  = -arch $(ARCH) -bundle -undefined dynamic_lookup \
            -mmacosx-version-min=$(MACOSX_VERSION_MIN) \
@@ -31,6 +31,11 @@ LDFLAGS  = -arch $(ARCH) -bundle -undefined dynamic_lookup \
 
 SRC_DIR   = src
 BUILD_DIR = build
+
+# built-in effect blocks: fx/<name>.metal is embedded into the jet_<name>
+# object as build/fx_<name>.inc (see src/jet_fx_object.h)
+FX_SRC  = $(wildcard fx/*.metal)
+FX_INCS = $(FX_SRC:fx/%.metal=$(BUILD_DIR)/fx_%.inc)
 
 OBJECTS = $(basename $(notdir $(wildcard $(SRC_DIR)/jet_*.mm)))
 TARGETS = $(OBJECTS:%=$(BUILD_DIR)/%.pd_darwin)
@@ -48,7 +53,10 @@ $(BUILD_DIR):
 $(BUILD_DIR)/%.pd_darwin: $(BUILD_DIR)/%.o
 	$(CXX) $(LDFLAGS) -o $@ $^
 
-$(BUILD_DIR)/%.o: $(SRC_DIR)/%.mm $(HEADERS) | $(BUILD_DIR)
+$(BUILD_DIR)/fx_%.inc: fx/%.metal tools/embed_fx.py | $(BUILD_DIR)
+	python3 tools/embed_fx.py $< $@
+
+$(BUILD_DIR)/%.o: $(SRC_DIR)/%.mm $(HEADERS) $(FX_INCS) | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
 
 # compiles every shader embedded in src/*.mm with Metal's runtime
@@ -59,7 +67,7 @@ $(BUILD_DIR)/%.o: $(SRC_DIR)/%.mm $(HEADERS) | $(BUILD_DIR)
 shadertest: $(BUILD_DIR)/msltest $(BUILD_DIR)/effecttest
 	python3 tools/extract_msl.py $(SRC_DIR) $(BUILD_DIR)/msl
 	$(BUILD_DIR)/msltest $(BUILD_DIR)/msl/*.metal
-	$(BUILD_DIR)/effecttest shaders/*.metal
+	$(BUILD_DIR)/effecttest shaders/*.metal fx/*.metal
 
 # the jet_shader side: parses, compiles and builds a pipeline for every
 # effect in shaders/ with the object's own code, plus a parameter-layout
