@@ -35,8 +35,15 @@ eigener Block dazu.
 - `jet_obj`: OBJ + MTL laden, texturiertes Blender-Modell mit Licht
   (die bestehende 3D-Basis: Kamera, Tiefentest, ein Richtungslicht)
 - Szene-in-Textur (`jet_render` o. ä.), mehrere Kameras, Schatten
-- Eigene Shader: `jet_shader` (Fragment, Datei, Live-Reload, benannte
-  Parameter), danach `jet_compute` (Compute-Shader)
+- Eigene Shader: `jet_shader` ist da (Fragment-Effekte aus Dateien mit
+  `// @param` / `// @input` / `// @feedback` / `// @size`, Parameter werden
+  zu Inlets, Autoreload, Beispiele in `shaders/`). `// @history N`
+  (Ringpuffer der letzten N Frames des ersten Eingangs,
+  `jet_history(t, p, uv, framesAgo)`) trägt `shaders/slitscan.metal` und
+  `slitscan_line.metal`, die `jet_slitscan`/`jet_slitscan_line` ersetzen
+  sollen (Objekte bleiben, bis der Vergleich im Bild bestätigt ist).
+  Offen: mehrere Durchläufe pro Objekt, `jet_compute`
+  (Compute-Shader), Slider/Min-Max-Bereiche für Parameter
 - Weitere Primitive, Material-/Lichtmodell erweitern
 - Linux/Windows (Vulkan-Backend oder WebGPU), erst wenn der Mac-Kern
   steht
@@ -100,7 +107,9 @@ eigener Block dazu.
   kaputten MSL-Code und zerstörte Includes schon beim Bauen ab statt als
   leeres graues Fenster. `make install` läuft nur, wenn der Test besteht.
   Braucht eine Metal-fähige Maschine und `python3`, aber nicht die
-  Offline-Metal-Toolchain.
+  Offline-Metal-Toolchain. Derselbe Schritt prüft auch alle
+  `shaders/*.metal` mit dem Code von `jet_shader` (`tools/effecttest.mm`,
+  inkl. Selbsttest des Parameter-Layouts gegen die GPU).
 
 ## Stolperfallen (hart erkämpft)
 

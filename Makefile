@@ -3,6 +3,7 @@
 # Layout:  src/     objects (one .mm per Pd object) + jet_shared.h
 #          help/    help patches (installed next to the bundles)
 #          assets/  small media files the help patches reference
+#          shaders/ example effect files for jet_shader
 #          build/   compiled bundles (generated)
 #
 # Every src/jet_*.mm becomes its own build/jet_*.pd_darwin bundle -
@@ -55,9 +56,16 @@ $(BUILD_DIR)/%.o: $(SRC_DIR)/%.mm $(HEADERS) | $(BUILD_DIR)
 # broken MSL (and things like a mangled #include) at build time instead
 # of as a silent blank window. needs a Metal-capable machine and
 # python3; does not need the offline Metal toolchain.
-shadertest: $(BUILD_DIR)/msltest
+shadertest: $(BUILD_DIR)/msltest $(BUILD_DIR)/effecttest
 	python3 tools/extract_msl.py $(SRC_DIR) $(BUILD_DIR)/msl
 	$(BUILD_DIR)/msltest $(BUILD_DIR)/msl/*.metal
+	$(BUILD_DIR)/effecttest shaders/*.metal
+
+# the jet_shader side: parses, compiles and builds a pipeline for every
+# effect in shaders/ with the object's own code, plus a parameter-layout
+# self-test that reads a pixel back from the GPU
+$(BUILD_DIR)/effecttest: tools/effecttest.mm $(SRC_DIR)/jet_shader_core.h | $(BUILD_DIR)
+	$(CXX) -std=c++14 -fobjc-arc -framework Metal -framework Foundation $< -o $@
 
 $(BUILD_DIR)/msltest: tools/msltest.mm | $(BUILD_DIR)
 	$(CXX) -fobjc-arc -framework Metal -framework Foundation $< -o $@
@@ -70,6 +78,7 @@ install: all shadertest
 	cp $(TARGETS) "$(PD_EXTERNALS_DIR)/"
 	cp help/*.pd "$(PD_EXTERNALS_DIR)/"
 	cp assets/* "$(PD_EXTERNALS_DIR)/"
+	cp shaders/*.metal "$(PD_EXTERNALS_DIR)/"
 
 clean:
 	rm -rf $(BUILD_DIR)

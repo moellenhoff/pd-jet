@@ -1,0 +1,44 @@
+#N canvas 100 100 760 800 10;
+#X obj 40 40 jet_win;
+#X msg 40 80 create;
+#X msg 130 80 destroy;
+#X obj 40 130 jet_head 0;
+#X obj 40 165 jet_perlin 256 256;
+#X obj 40 200 jet_shader kaleidoscope.metal;
+#X obj 40 260 jet_rectangle 4 3;
+#X text 260 165 <- a texture source;
+#X text 260 200 <- the effect: its @param lines became inlets;
+#X text 40 230 segments;
+#X floatatom 110 230 5 1 24 0 - - -;
+#X floatatom 190 230 5 -360 360 0 - - -;
+#X floatatom 270 230 5 0.2 4 0 - - -;
+#X text 150 232 rotation;
+#X msg 430 230 info;
+#X msg 430 260 reload;
+#X msg 430 290 segments 12;
+#X msg 430 320 autoreload 0;
+#X msg 430 350 resolution 512 512;
+#X text 40 300 Inlets: chain | segments | rotation | zoom. Send "info" and the list of inlets appears in the Pd window.;
+#X text 40 370 [jet_shader file.metal] runs your own Metal fragment shader on the current texture and passes the result on as the new current texture - a Pd version of TouchDesigner's GLSL TOP. The file sits next to the patch (or anywhere in the Pd path). Examples in the shaders folder: kaleidoscope \, invert \, feedback (reads its own previous frame) and plasma (a generator without any input).;
+#X text 40 470 An effect file is plain MSL plus comment lines that start with @:
+// @input src            the texture arriving from the chain
+// @input mask masktex   more inputs are named textures (see jet_share/jet_use) \, "masktex" is the default name
+// @param float amount = 0.5       becomes a float inlet
+// @param color tint = 1 0.5 0 1   float2/float3/float4/color become list inlets
+// @feedback             gives you t.prev \, this effect's previous output
+// @size 512 512         output size (default: the size of the first input)
+and one function: float4 effect(float2 uv \, constant JetParams &p \, JetTex t) { ... }. uv runs 0..1 from the top left \, p.name reads a parameter \, p.time / p.frame / p.resolution are always there \, t.src.sample(t.smp \, uv) reads an input.;
+#X text 40 640 Parameter inlets only store (like everywhere in jet) - the next bang from the chain uses them. The same values can be sent to the left inlet by name: "segments 8" or "tint 1 0.5 0 1". Inlets are fixed when the object is created: after adding or removing an @param/@input line retype the object. Changing the CODE needs nothing - save the file and the picture updates by itself within about a third of a second (autoreload)\ \, "reload" does it on demand. Compile errors appear in the Pd window with the line number of your file.;
+#X connect 1 0 0 0;
+#X connect 2 0 0 0;
+#X connect 3 0 4 0;
+#X connect 4 0 5 0;
+#X connect 5 0 6 0;
+#X connect 10 0 5 1;
+#X connect 11 0 5 2;
+#X connect 12 0 5 3;
+#X connect 14 0 5 0;
+#X connect 15 0 5 0;
+#X connect 16 0 5 0;
+#X connect 17 0 5 0;
+#X connect 18 0 5 0;
