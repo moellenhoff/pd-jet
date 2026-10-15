@@ -43,7 +43,7 @@ HEADERS = $(wildcard $(SRC_DIR)/*.h)
 
 PD_EXTERNALS_DIR ?= $(HOME)/Documents/Pd/externals/jet
 
-.PHONY: all clean install shadertest
+.PHONY: all clean install install-only package shadertest
 
 all: $(TARGETS)
 
@@ -78,15 +78,32 @@ $(BUILD_DIR)/effecttest: tools/effecttest.mm $(SRC_DIR)/jet_shader_core.h | $(BU
 $(BUILD_DIR)/msltest: tools/msltest.mm | $(BUILD_DIR)
 	$(CXX) -fobjc-arc -framework Metal -framework Foundation $< -o $@
 
-# bundles, help patches and assets all go flat into one externals
-# folder - Pd finds an object's -help.pd and a patch's relative media
-# paths next to the bundle
-install: all shadertest
+# bundles, help patches, effect files and assets all go flat into one
+# externals folder - Pd finds an object's -help.pd and a patch's relative
+# media/effect paths next to the bundle
+install: all shadertest install-only
+
+# copies what is already built, without compiling anything
+install-only:
+	@test -n "$(wildcard $(BUILD_DIR)/*.pd_darwin)" || { echo "nothing built yet - run 'make' first"; exit 1; }
 	mkdir -p "$(PD_EXTERNALS_DIR)"
-	cp $(TARGETS) "$(PD_EXTERNALS_DIR)/"
+	cp $(BUILD_DIR)/*.pd_darwin "$(PD_EXTERNALS_DIR)/"
 	cp help/*.pd "$(PD_EXTERNALS_DIR)/"
 	cp assets/* "$(PD_EXTERNALS_DIR)/"
 	cp shaders/*.metal "$(PD_EXTERNALS_DIR)/"
+
+# a ready-to-copy folder + zip for another Mac (Apple Silicon): the same
+# flat layout install produces, plus tools/INSTALL.txt
+package: all shadertest
+	rm -rf dist
+	mkdir -p dist/jet
+	cp $(BUILD_DIR)/*.pd_darwin dist/jet/
+	cp help/*.pd dist/jet/
+	cp assets/* dist/jet/
+	cp shaders/*.metal dist/jet/
+	cp tools/INSTALL.txt dist/jet/
+	cd dist && zip -qr jet-macos-arm64.zip jet
+	@echo "-> dist/jet-macos-arm64.zip (and the folder dist/jet)"
 
 clean:
 	rm -rf $(BUILD_DIR)

@@ -115,8 +115,12 @@ eigener Block dazu.
 
 ## Werkzeuge
 
-- `make` baut alle Bundles nach `build/`; `make install` kopiert Bundles,
-  Help-Patches und Assets nach `~/Documents/Pd/externals/jet/`.
+- `make` baut alle Bundles nach `build/`; `make install` baut, testet und
+  kopiert Bundles, Help-Patches, Effekt-Dateien und Assets nach
+  `~/Documents/Pd/externals/jet/`; `make install-only` kopiert nur, was
+  schon gebaut ist. `make package` erzeugt `dist/jet/` und
+  `dist/jet-macos-arm64.zip` für einen anderen Mac (Apple Silicon, macOS 11+,
+  ad-hoc signiert, mit `tools/INSTALL.txt`).
 - `make shadertest` zieht alle eingebetteten Shader aus `src/*.mm`
   (`tools/extract_msl.py`) und kompiliert sie mit Metals Laufzeit-Compiler
   (`tools/msltest.mm`), also auf demselben Weg wie Pd beim Laden. Fängt

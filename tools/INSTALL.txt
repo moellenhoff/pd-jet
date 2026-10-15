@@ -1,0 +1,27 @@
+jet - GPU-Render-Ketten fuer Pure Data (Metal, macOS)
+
+Voraussetzungen: Mac mit Apple Silicon (M1 oder neuer), macOS 11 oder neuer,
+Pure Data (vanilla) 0.51 oder neuer. Auf Intel-Macs laeuft jet nicht.
+
+Installation (nichts muss kompiliert werden):
+
+1. Den ganzen Ordner "jet" nach  ~/Documents/Pd/externals/  kopieren.
+   (Der Ordner enthaelt die Objekte *.pd_darwin, die Hilfe-Patches *-help.pd,
+   die Effekt-Dateien *.metal und anim-1.mov flach nebeneinander - so soll es sein.)
+
+2. Falls der Ordner heruntergeladen oder per AirDrop/Mail gekommen ist, entfernt
+   man die Download-Markierung von macOS, sonst blockiert sie das Laden:
+
+       xattr -cr ~/Documents/Pd/externals/jet
+
+   (Wenn macOS trotzdem meldet, eine Datei sei beschaedigt: die Objekte neu
+   signieren mit   codesign --force --sign - ~/Documents/Pd/externals/jet/*.pd_darwin )
+
+3. In Pd: Einstellungen > Pfad > "Neu..." und  ~/Documents/Pd/externals/jet
+   hinzufuegen. Pd danach ganz beenden und neu starten.
+
+4. Ausprobieren: eine der Hilfe-Dateien oeffnen, z. B. jet_transform-help.pd
+   (Menue Datei > Oeffnen im Ordner jet), dort "create" an jet_win klicken.
+
+Bei einem Update den Ordner einfach ersetzen und Pd neu starten - geladene
+Objekte bleiben bis zum Neustart im Speicher.
