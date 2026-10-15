@@ -203,7 +203,7 @@ static void jet_slitscan_delayMapBang(t_jet_slitscan *x)
 
 static void jet_slitscan_bang(t_jet_slitscan *x)
 {
-  if(!jet_win_current_encoder()) {
+  if(!jet_win_frame_active()) {
     return;
   }
 

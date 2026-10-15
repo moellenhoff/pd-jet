@@ -191,7 +191,7 @@ static void jet_slitscan_line_ensureBuffers(t_jet_slitscan_line *x, int w, int h
 
 static void jet_slitscan_line_bang(t_jet_slitscan_line *x)
 {
-  if(!jet_win_current_encoder()) {
+  if(!jet_win_frame_active()) {
     return;
   }
 

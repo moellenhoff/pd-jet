@@ -1,9 +1,9 @@
-#N canvas 100 100 740 640 10;
+#N canvas 100 100 740 720 10;
 #X obj 40 40 jet_win;
 #X msg 40 80 create;
 #X msg 130 80 destroy;
 #X obj 40 130 jet_head 0;
-#X obj 40 170 jet_color 1 0.3 0.3;
+#X obj 40 170 jet_color 1 0.3 0.3 1;
 #X obj 40 210 jet_rectangle 1.5 1.5;
 #X obj 40 250 jet_translateXYZ 3.5 0 0;
 #X obj 40 290 jet_color 0.3 0.6 1;
@@ -22,8 +22,12 @@
 #X msg 380 185 set 0.2 0.9 0.4;
 #X msg 380 215 set 1 0.3 0.3;
 #X text 380 245 <- "set r g b" (or a plain list) stores all three at once;
-#X text 40 380 [jet_color r g b] is Gem's [color] for jet: it sets the chain's current colour (0..1 \, default 1 1 1) and then forwards the bang. Every shape after it is drawn in that colour \; a shape that has a texture multiplies the texture by it instead (tint). Inlets \, Gem-style: the left one takes the chain (bang) \, the three after it are red \, green and blue. They only store - the chain's next bang applies them (the render tick bangs it every frame).;
-#X text 40 490 The colour belongs to the chain and starts as white in every chain and every frame \, so it never leaks into other chains. Inside one chain it stays set until the next jet_color - wrap a branch in [jet_separator] to keep its colour away from its siblings.;
+#X text 40 380 [jet_color r g b a] is Gem's [color] for jet: it sets the chain's current colour (0..1 \, default 1 1 1 1) and then forwards the bang. Every shape after it is drawn in that colour \; a shape that has a texture multiplies the texture by it instead (tint). Inlets \, Gem-style: the left one takes the chain (bang) \, the four after it are red \, green \, blue and alpha. They only store - the chain's next bang applies them (the render tick bangs it every frame). "set r g b [a]" stores several at once.;
+#X text 40 490 The colour belongs to the chain: it starts as opaque white in every chain and every frame \, so it never leaks into other chains. Inside one chain it stays set until the next jet_color - wrap a branch in [jet_separator] to keep its colour away from its siblings.
+
+Alpha (0 = invisible \, 1 = opaque) blends the shape with what is already in the picture. Translucent shapes with depth testing on are drawn after the opaque ones \, from back to front \, and do not hide what is behind them \; with [jet_depth 0] they blend in drawing order instead. A texture's own alpha channel is ignored.;
+#X floatatom 540 145 5 0 1 0 - - -;
+#X text 540 125 alpha;
 #X connect 1 0 0 0;
 #X connect 2 0 0 0;
 #X connect 3 0 4 0;
@@ -36,3 +40,4 @@
 #X connect 17 0 4 1;
 #X connect 18 0 4 2;
 #X connect 19 0 4 3;
+#X connect 25 0 4 4;

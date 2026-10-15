@@ -41,10 +41,14 @@
  *    survive on ticks without new data must re-publish what they
  *    hold every bang rather than rely on it still being there.
  *
- * Rule for anything that draws: set every piece of encoder state you
- * depend on explicitly (pipeline, depth-stencil, textures, buffers)
- * instead of assuming what an earlier draw left behind - a chain can
- * contain shapes with and without depth testing in any order.
+ * Drawing: shapes never touch the on-screen encoder. They record draw
+ * commands (jet_win_submit_draw, below) while the chains run; the
+ * window sorts them and draws everything in ONE on-screen pass after
+ * the last chain, setting pipeline, depth and blend state itself, so
+ * nothing one shape does can affect another. Objects that render into
+ * a texture (jet_perlin, jet_feedback, ...) still encode their own
+ * offscreen pass on jet_win_queue() immediately - same-queue commit
+ * order guarantees it is finished before the on-screen pass reads it.
  * ------------------------------------------------------------------
  */
 #ifndef _INCLUDE__JET_SHARED_H_
@@ -58,15 +62,16 @@
 extern "C" {
 #endif
 
-// the render encoder for the frame currently being built, or nil if
-// no jet_win is mid-frame right now. only meaningful while handling
-// a "render" bang sent from jet_win's per-frame chain trigger.
-id<MTLRenderCommandEncoder> jet_win_current_encoder(void);
+// non-zero while a jet_win is dispatching its chains for the current
+// frame (i.e. while a jet_head bang is being handled). Objects that
+// only make sense mid-frame (producers, shapes) check this and skip
+// quietly otherwise.
+int jet_win_frame_active(void);
 
-// the two shared pipelines (flat per-vertex color / texture-sampled)
-// every shape object picks between, rather than building its own.
-id<MTLRenderPipelineState> jet_win_flat_pipeline(void);
-id<MTLRenderPipelineState> jet_win_textured_pipeline(void);
+// shared resources. Producers (jet_perlin, jet_feedback, ...) encode
+// their own OFFSCREEN passes on jet_win_queue() right away; shapes do
+// not touch an encoder at all, they submit draw commands (see
+// jet_win_submit_draw below).
 id<MTLSamplerState>        jet_win_sampler(void);
 id<MTLDevice>               jet_win_device(void);
 id<MTLCommandQueue>         jet_win_queue(void);
@@ -131,8 +136,9 @@ void jet_win_get_light(float outDir3[3], float outColor3[3]);
 // every shape: it is the flat color of a shape without a texture and a
 // multiplicative tint on one with a texture, like Gem's [color].
 // Chain-scoped: jet_win resets it to opaque white before every chain
-// (jet_separator saves/restores it). alpha is carried but unused until
-// blending exists.
+// (jet_separator saves/restores it). Alpha blends the shape (source-
+// over); it applies to flat and textured shapes alike, and a
+// texture's own alpha channel is ignored.
 void jet_win_get_color(float outRGBA[4]);
 void jet_win_set_color(const float rgba[4]);
 
@@ -142,19 +148,26 @@ void jet_win_set_color(const float rgba[4]);
 int  jet_win_get_depth(void);
 void jet_win_set_depth(int on);
 
-// the two 3D pipelines (flat per-vertex color / texture-sampled),
-// mirroring jet_win_flat_pipeline/textured_pipeline above but with
-// depth testing and a position+normal(+uv) vertex layout - see
-// jet_cube.mm for the exact vertex structs each expects.
-id<MTLRenderPipelineState> jet_win_flat3d_pipeline(void);
-id<MTLRenderPipelineState> jet_win_textured3d_pipeline(void);
-id<MTLDepthStencilState>   jet_win_depth_state(void);
+// --- draw commands. Shapes don't draw into a live encoder: they
+// RECORD what they want drawn (a vertex block, a pipeline kind, a
+// texture, the uniforms) with jet_win_submit_draw(), and the window
+// executes the whole list in one on-screen render pass at the end of
+// the frame, after every chain has run. This keeps encoder state out
+// of the objects' hands (nothing can leak between shapes), lets the
+// window decide ordering and depth/blend state, and is the basis for
+// layers, multiple passes and moving rendering off the Pd thread.
+//
+// The window reads the chain's depth flag (jet_depth) and the alpha of
+// uniforms.tint when a command is submitted, and orders execution:
+//   - everything that is NOT (depth-tested AND alpha < 1) runs in
+//     submission order, so depth-off layering keeps painter's order;
+//   - depth-tested translucent shapes run afterwards, sorted back to
+//     front, testing depth but not writing it.
+// Pipelines: FLAT3D takes JetVertex3D, TEXTURED3D takes JetVertex3DTex
+// (+ a texture); both take the JetUniforms3D block defined below.
+typedef enum { JET_PIPE_FLAT3D = 0, JET_PIPE_TEXTURED3D = 1 } JetPipeline;
 
-// depth-stencil state that always passes and never writes (what
-// jet_depth 0 selects). The shapes share ONE on-screen encoder this
-// frame and setDepthStencilState: persists across draw calls, so
-// every shape sets its state explicitly via jet_win_apply_depth().
-id<MTLDepthStencilState>   jet_win_no_depth_state(void);
+
 
 #ifdef __cplusplus
 }
@@ -305,14 +318,19 @@ static inline void jet_fill_uniforms3d(JetUniforms3D *u, bool unlit)
   jet_win_get_color(u->tint);
 }
 
-// sets the encoder's depth-stencil state from the chain's depth flag
-static inline void jet_win_apply_depth(id<MTLRenderCommandEncoder> enc)
-{
-  id<MTLDepthStencilState> st = jet_win_get_depth() ? jet_win_depth_state()
-                                                    : jet_win_no_depth_state();
-  if(st) {
-    [enc setDepthStencilState:st];
-  }
-}
+typedef struct {
+  JetPipeline    pipeline;
+  const void    *vertices;      // copied by the window (max 4096 bytes), or...
+  size_t         vertexBytes;
+  id<MTLBuffer>  vertexBuffer;   // ...a persistent buffer the window only references
+  size_t         vertexBufferOffset;
+  unsigned int   vertexCount;
+  id<MTLTexture> texture;        // TEXTURED3D only
+  JetUniforms3D  uniforms;
+} JetDrawDesc;
+
+// records one draw into the active window's frame. Returns 0 (and
+// draws nothing) if no frame is in progress or the desc is invalid.
+extern "C" int jet_win_submit_draw(const JetDrawDesc *desc);
 
 #endif  // for header file

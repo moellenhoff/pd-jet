@@ -7,11 +7,17 @@
  * every chain and never leaks into the next one; wrap a branch in
  * jet_separator to keep its color from reaching its siblings.
  *
- * [jet_color <r> <g> <b>]  creation args, default 1 1 1.
- * Inlets, Gem-style: the left one takes the chain (bang); the three
- * after it are red, green and blue. They only store - the chain's
- * next bang applies them. "set r g b" (or a list "r g b") stores all
- * three at once.
+ * [jet_color <r> <g> <b> <a>]  creation args, default 1 1 1 1.
+ * Inlets, Gem-style: the left one takes the chain (bang); the four
+ * after it are red, green, blue and alpha (0 = invisible, 1 =
+ * opaque). They only store - the chain's next bang applies them.
+ * "set r g b [a]" (or a list) stores several at once.
+ *
+ * Alpha blends the shape with what is already in the picture. Shapes
+ * with alpha < 1 and depth testing on are drawn after all other
+ * shapes, sorted back to front, and don't hide what is behind them;
+ * with [jet_depth 0] they blend in drawing order instead. A texture's
+ * own alpha channel is ignored - only this alpha counts.
  * ------------------------------------------------------------------
  */
 
@@ -23,12 +29,12 @@ static t_class *jet_color_class;
 typedef struct _jet_color {
   t_object  x_obj;
   t_outlet *x_outlet;
-  t_float   x_r, x_g, x_b;
+  t_float   x_r, x_g, x_b, x_a;
 } t_jet_color;
 
 static void jet_color_bang(t_jet_color *x)
 {
-  const float rgba[4] = { x->x_r, x->x_g, x->x_b, 1.f };
+  const float rgba[4] = { x->x_r, x->x_g, x->x_b, x->x_a };
   jet_win_set_color(rgba);
   outlet_bang(x->x_outlet);
 }
@@ -45,6 +51,9 @@ static void jet_color_set(t_jet_color *x, t_symbol *s, int argc, t_atom *argv)
   if(argc >= 3) {
     x->x_b = atom_getfloatarg(2, argc, argv);
   }
+  if(argc >= 4) {
+    x->x_a = atom_getfloatarg(3, argc, argv);
+  }
 }
 
 static void *jet_color_new(t_symbol *s, int argc, t_atom *argv)
@@ -53,12 +62,13 @@ static void *jet_color_new(t_symbol *s, int argc, t_atom *argv)
   (void)s;
 
   x->x_outlet = outlet_new(&x->x_obj, &s_bang);
-  x->x_r = x->x_g = x->x_b = 1.f;
+  x->x_r = x->x_g = x->x_b = x->x_a = 1.f;
   jet_color_set(x, s, argc, argv);
 
   floatinlet_new(&x->x_obj, &x->x_r);
   floatinlet_new(&x->x_obj, &x->x_g);
   floatinlet_new(&x->x_obj, &x->x_b);
+  floatinlet_new(&x->x_obj, &x->x_a);
 
   return (void *)x;
 }

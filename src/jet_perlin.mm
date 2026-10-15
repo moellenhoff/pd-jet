@@ -14,14 +14,14 @@
  * (or, later, several consumers at once) like a real TOP, instead of
  * being a dead end on screen.
  *
- * Why a separate command buffer: jet_win's on-screen encoder stays
- * open for the whole frame (every jet_head chain draws into it in
- * turn), and Metal only allows one open encoder per command buffer
- * at a time. A second, independent command buffer submitted to the
- * SAME queue is the normal way to do an extra render pass mid-frame;
- * Metal guarantees same-queue command buffers execute in commit
- * order, so this offscreen pass is guaranteed done before the later-
- * committed on-screen pass samples its texture - no manual
+ * Why a separate command buffer: this is its own render pass (into a
+ * texture), while the shapes are only recorded and drawn later by
+ * jet_win's single on-screen pass. A command buffer committed to the
+ * SAME queue is the normal way to do an extra pass mid-frame; Metal
+ * guarantees same-queue command buffers execute in commit order, so
+ * this offscreen pass is guaranteed done before the later-committed
+ * on-screen pass (committed once all chains have run) samples its
+ * texture - no manual
  * wait/fence needed.
  *
  * Builds its own pipeline (lazily, once jet_win has a device) -
@@ -177,7 +177,7 @@ static void jet_perlin_bang(t_jet_perlin *x)
 {
   // only meaningful while some jet_win frame is in progress (this
   // is also our cue that the device/queue are ready)
-  if(!jet_win_current_encoder()) {
+  if(!jet_win_frame_active()) {
     return;
   }
   jet_perlin_ensurePipeline(x);

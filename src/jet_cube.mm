@@ -2,10 +2,10 @@
  * jet_cube - the first 3D shape object: a unit cube (edge length
  * settable via creation arg, default 1.0), lit by jet_win's single
  * directional light, drawn with depth testing against everything
- * else in the scene. Same draw-directly-into-the-shared-on-screen-
- * encoder pattern as jet_triangle/jet_rectangle (as opposed to
- * jet_perlin/jet_feedback's render-to-texture pattern) - it's a
- * shape, not a texture source.
+ * else in the scene. Like jet_triangle/jet_rectangle it records its
+ * draw as a command for the window to execute at the end of the frame
+ * (as opposed to jet_perlin/jet_feedback's render-to-texture pattern)
+ * - it's a shape, not a texture source.
  *
  * [jet_cube <size>]  edge length, default 1. Inlets, Gem-style: left
  * = the chain (bang, plus "size s"), right = size (stores only);
@@ -68,71 +68,51 @@ static const CubeFace kCubeFaces[6] = {
 
 static void jet_cube_bang(t_jet_cube *x)
 {
-  id<MTLRenderCommandEncoder> enc = jet_win_current_encoder();
-  if(!enc) {
+  if(!jet_win_frame_active()) {
     return;  // no jet_win mid-frame right now - just skip quietly
   }
 
-  Uniforms3D u;
-  jet_fill_uniforms3d(&u, false);  // solids are lit by the window light
-  jet_win_apply_depth(enc);
+  JetDrawDesc d;
+  memset(&d, 0, sizeof(d));
+  jet_fill_uniforms3d(&d.uniforms, false);  // solids are lit by the window light
+  d.vertexCount = 36;
 
   id<MTLTexture> tex = jet_win_current_texture();
   const float s = x->x_size;
+  const int tri[6] = { 0, 1, 2, 0, 2, 3 };
+  Vertex3DTex tverts[36];
+  Vertex3D fverts[36];
 
-  if(tex) {
-    id<MTLRenderPipelineState> pipeline = jet_win_textured3d_pipeline();
-    if(!pipeline) {
-      return;
-    }
-    Vertex3DTex verts[36];
-    int vi = 0;
-    for(int f = 0; f < 6; f++) {
-      const CubeFace &face = kCubeFaces[f];
-      const int tri[6] = { 0, 1, 2, 0, 2, 3 };
-      for(int t = 0; t < 6; t++) {
-        const int c = tri[t];
-        Vertex3DTex &v = verts[vi++];
-        v.pos[0] = face.c[c][0] * s;
-        v.pos[1] = face.c[c][1] * s;
-        v.pos[2] = face.c[c][2] * s;
+  int vi = 0;
+  for(int f = 0; f < 6; f++) {
+    const CubeFace &face = kCubeFaces[f];
+    for(int t = 0; t < 6; t++, vi++) {
+      const int c = tri[t];
+      const float px = face.c[c][0] * s, py = face.c[c][1] * s, pz = face.c[c][2] * s;
+      if(tex) {
+        Vertex3DTex &v = tverts[vi];
+        v.pos[0] = px; v.pos[1] = py; v.pos[2] = pz;
         v.normal[0] = face.n[0]; v.normal[1] = face.n[1]; v.normal[2] = face.n[2];
         v.uv[0] = face.uv[c][0]; v.uv[1] = face.uv[c][1];
-      }
-    }
-    [enc setRenderPipelineState:pipeline];
-    [enc setVertexBytes:verts length:sizeof(verts) atIndex:0];
-    [enc setVertexBytes:&u length:sizeof(u) atIndex:1];
-    [enc setFragmentBytes:&u length:sizeof(u) atIndex:1];
-    [enc setFragmentTexture:tex atIndex:0];
-    [enc setFragmentSamplerState:jet_win_sampler() atIndex:0];
-    [enc drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:36];
-  } else {
-    id<MTLRenderPipelineState> pipeline = jet_win_flat3d_pipeline();
-    if(!pipeline) {
-      return;
-    }
-    Vertex3D verts[36];
-    int vi = 0;
-    for(int f = 0; f < 6; f++) {
-      const CubeFace &face = kCubeFaces[f];
-      const int tri[6] = { 0, 1, 2, 0, 2, 3 };
-      for(int t = 0; t < 6; t++) {
-        const int c = tri[t];
-        Vertex3D &v = verts[vi++];
-        v.pos[0] = face.c[c][0] * s;
-        v.pos[1] = face.c[c][1] * s;
-        v.pos[2] = face.c[c][2] * s;
+      } else {
+        Vertex3D &v = fverts[vi];
+        v.pos[0] = px; v.pos[1] = py; v.pos[2] = pz;
         v.normal[0] = face.n[0]; v.normal[1] = face.n[1]; v.normal[2] = face.n[2];
-        v.color[0] = u.tint[0]; v.color[1] = u.tint[1]; v.color[2] = u.tint[2];
+        memcpy(v.color, d.uniforms.tint, 3 * sizeof(float));
       }
     }
-    [enc setRenderPipelineState:pipeline];
-    [enc setVertexBytes:verts length:sizeof(verts) atIndex:0];
-    [enc setVertexBytes:&u length:sizeof(u) atIndex:1];
-    [enc setFragmentBytes:&u length:sizeof(u) atIndex:1];
-    [enc drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:36];
   }
+  if(tex) {
+    d.pipeline = JET_PIPE_TEXTURED3D;
+    d.texture = tex;
+    d.vertices = tverts;
+    d.vertexBytes = sizeof(tverts);
+  } else {
+    d.pipeline = JET_PIPE_FLAT3D;
+    d.vertices = fverts;
+    d.vertexBytes = sizeof(fverts);
+  }
+  jet_win_submit_draw(&d);
 
   outlet_bang(x->x_outlet);
 }

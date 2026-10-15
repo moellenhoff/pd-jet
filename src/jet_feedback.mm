@@ -170,7 +170,7 @@ static void jet_feedback_bang(t_jet_feedback *x)
   // only meaningful while some jet_win frame is in progress (also
   // our cue that the device/queue are ready) - same convention as
   // jet_perlin
-  if(!jet_win_current_encoder()) {
+  if(!jet_win_frame_active()) {
     return;
   }
 

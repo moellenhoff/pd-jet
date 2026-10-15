@@ -15,7 +15,7 @@ nur im laufenden Pd sichtbar sind.
 | # | Entscheidung | Beschluss | Aufwand | Status |
 |---|---|---|---|---|
 | 1 | Name/Präfix `jet_`, eigener Ordner, Git-Repo | ja | 1 | erledigt (Repo ohne Commit angelegt) |
-| 2 | **Befehlsliste statt offenem Encoder**: Objekte zeichnen Befehle pro Render-Pass auf, das Fenster führt sie am Frame-Ende aus | ja – Herzstück des Umbaus | 5–8 | offen |
+| 2 | **Befehlsliste statt offenem Encoder**: Objekte zeichnen Befehle pro Render-Pass auf, das Fenster führt sie am Frame-Ende aus | ja – Herzstück des Umbaus | 5–8 | erledigt für den Bildschirm-Pass (Formen zeichnen Befehle auf, `jet_win` führt sie in einem Pass aus, sortiert Transparenz); Offscreen-Erzeuger (perlin, feedback, slitscan) kodieren ihre eigenen Pässe weiterhin sofort – wird erst für `jet_render`/Teilszenen in Texturen relevant |
 | 3 | **Zustand pro Kette** (Transform, Textur, Tiefentest, Blending) beim Kettenstart sauber zurücksetzen | ja | 1–2 | erledigt (`jet_win_beginChain`; Blending folgt, sobald es Blending gibt) |
 | 4 | **Benannte Textur-Handles** zusätzlich zum „current texture“ (bleibt der normale Gem-artige Fluss) | ja, Hybrid | 3–5 | offen |
 | 5 | **Zeichenreihenfolge**: Layer/Priorität pro Form, Sortierung für Transparenz (braucht 2) | ja | 3–5 | offen |
@@ -74,9 +74,15 @@ eigener Block dazu.
 - **Alle Formen sind echte 3D-Geometrie** (Rechteck/Dreieck ungelit, Würfel
   gelit) und laufen durch Kamera und ein einziges 4x4-Modelltransform.
   Der frühere 2D-Transform ist entfernt.
-- **Zustandsbereiche** (Kette / Frame / Objekt) und die Regel, dass jedes
-  zeichnende Objekt seinen Encoder-Zustand selbst setzt, stehen im Kopf
-  von `src/jet_shared.h`.
+- **Zeichnen = Befehle aufzeichnen.** Formen rufen `jet_win_submit_draw`
+  auf (Vertexdaten, Pipeline-Art, Textur, Uniforms); das Fenster führt am
+  Frame-Ende alle in einem Render-Pass aus. Reihenfolge: alles außer
+  „tiefengetestet und alpha < 1“ in Aufzeichnungsreihenfolge (damit
+  `jet_depth 0` Malerreihenfolge behält), danach die transparenten von
+  hinten nach vorn, ohne Tiefe zu schreiben.
+- **Alpha** kommt aus `jet_color r g b a`; Texturen-Alpha wird ignoriert.
+- **Zustandsbereiche** (Kette / Frame / Objekt) stehen im Kopf von
+  `src/jet_shared.h`.
 - **Render an/aus:** ein Float an `jet_win` (1/0) wie bei `gemwin`.
 
 ## Werkzeuge
@@ -113,5 +119,11 @@ eigener Block dazu.
 - **Pd-Dateiformat:** Kommas/Semikolons in Message-Boxen und Kommentaren
   müssen als `\,` / `\;` geschrieben werden, sonst wird der Patch
   zerlegt.
-- **Encoder-Zustand:** Depth-Stencil-Zustand bleibt am geteilten Encoder
-  bestehen; 2D-Formen setzen daher explizit „kein Tiefentest“.
+- **Encoder-Zustand:** gibt es für Formen nicht mehr (Befehlsliste). Wer
+  einen eigenen Offscreen-Pass kodiert, setzt dort alles selbst.
+- **Shader-Test und Leerzeilen:** `tools/extract_msl.py` setzt Shader aus
+  aufeinanderfolgenden String-Literalzeilen zusammen; eine Leerzeile oder
+  ein Kommentar hinter dem Literal in derselben Zeile schneidet den
+  Shader ab (der Test schlägt dann mit „missing }“ fehl).
+- **setVertexBytes** darf höchstens 4 KB: größere Netze (OBJ) brauchen
+  einen `MTLBuffer` (`JetDrawDesc.vertexBuffer`).

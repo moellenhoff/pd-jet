@@ -46,8 +46,7 @@ typedef struct _jet_rectangle {
 
 static void jet_rectangle_bang(t_jet_rectangle *x)
 {
-  id<MTLRenderCommandEncoder> enc = jet_win_current_encoder();
-  if(!enc) {
+  if(!jet_win_frame_active()) {
     return;  // no jet_win mid-frame right now - just skip quietly
   }
 
@@ -59,48 +58,37 @@ static void jet_rectangle_bang(t_jet_rectangle *x)
   const float cv[4] = {  0,  1,  1,  0 };
   const int   tri[6] = { 0, 1, 2, 0, 2, 3 };
 
-  JetUniforms3D u;
-  jet_fill_uniforms3d(&u, true);  // flat shapes are unlit
-  jet_win_apply_depth(enc);
+  JetDrawDesc d;
+  memset(&d, 0, sizeof(d));
+  jet_fill_uniforms3d(&d.uniforms, true);  // flat shapes are unlit
+  d.vertexCount = 6;
 
   id<MTLTexture> tex = jet_win_current_texture();
+  JetVertex3DTex tverts[6];
+  JetVertex3D fverts[6];
   if(tex) {
-    id<MTLRenderPipelineState> pipeline = jet_win_textured3d_pipeline();
-    if(!pipeline) {
-      return;
-    }
-    JetVertex3DTex verts[6];
     for(int i = 0; i < 6; i++) {
       const int c = tri[i];
-      verts[i].pos[0] = cx[c]; verts[i].pos[1] = cy[c]; verts[i].pos[2] = 0.f;
-      verts[i].normal[0] = 0.f; verts[i].normal[1] = 0.f; verts[i].normal[2] = 1.f;
-      verts[i].uv[0] = cu[c]; verts[i].uv[1] = cv[c];
+      tverts[i].pos[0] = cx[c]; tverts[i].pos[1] = cy[c]; tverts[i].pos[2] = 0.f;
+      tverts[i].normal[0] = 0.f; tverts[i].normal[1] = 0.f; tverts[i].normal[2] = 1.f;
+      tverts[i].uv[0] = cu[c]; tverts[i].uv[1] = cv[c];
     }
-    [enc setRenderPipelineState:pipeline];
-    [enc setVertexBytes:verts length:sizeof(verts) atIndex:0];
-    [enc setVertexBytes:&u length:sizeof(u) atIndex:1];
-    [enc setFragmentBytes:&u length:sizeof(u) atIndex:1];
-    [enc setFragmentTexture:tex atIndex:0];
-    [enc setFragmentSamplerState:jet_win_sampler() atIndex:0];
-    [enc drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:6];
+    d.pipeline = JET_PIPE_TEXTURED3D;
+    d.texture = tex;
+    d.vertices = tverts;
+    d.vertexBytes = sizeof(tverts);
   } else {
-    id<MTLRenderPipelineState> pipeline = jet_win_flat3d_pipeline();
-    if(!pipeline) {
-      return;
-    }
-    JetVertex3D verts[6];
     for(int i = 0; i < 6; i++) {
       const int c = tri[i];
-      verts[i].pos[0] = cx[c]; verts[i].pos[1] = cy[c]; verts[i].pos[2] = 0.f;
-      verts[i].normal[0] = 0.f; verts[i].normal[1] = 0.f; verts[i].normal[2] = 1.f;
-      memcpy(verts[i].color, u.tint, 3 * sizeof(float));
+      fverts[i].pos[0] = cx[c]; fverts[i].pos[1] = cy[c]; fverts[i].pos[2] = 0.f;
+      fverts[i].normal[0] = 0.f; fverts[i].normal[1] = 0.f; fverts[i].normal[2] = 1.f;
+      memcpy(fverts[i].color, d.uniforms.tint, 3 * sizeof(float));
     }
-    [enc setRenderPipelineState:pipeline];
-    [enc setVertexBytes:verts length:sizeof(verts) atIndex:0];
-    [enc setVertexBytes:&u length:sizeof(u) atIndex:1];
-    [enc setFragmentBytes:&u length:sizeof(u) atIndex:1];
-    [enc drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:6];
+    d.pipeline = JET_PIPE_FLAT3D;
+    d.vertices = fverts;
+    d.vertexBytes = sizeof(fverts);
   }
+  jet_win_submit_draw(&d);
   outlet_bang(x->x_outlet);
 }
 

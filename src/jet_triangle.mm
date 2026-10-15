@@ -1,10 +1,10 @@
 /* ------------------------------------------------------------------
  * jet_triangle - a minimal "shape object" for the jet_win render
- * chain: on a bang (sent by jet_head), draws a triangle in the chain
- * color (see jet_color) into whichever jet_win is currently
- * mid-frame, via jet_shared.h's jet_win_current_encoder() - resolved
- * across bundles at load time, same trick as pix_* objects reaching
- * into Gem. Always flat-colored and unlit (unlike jet_rectangle, it
+ * chain: on a bang (sent by jet_head), records a triangle in the chain
+ * color (see jet_color) as a draw command for whichever jet_win is
+ * currently mid-frame (jet_shared.h's jet_win_submit_draw, resolved
+ * across bundles at load time - same trick as pix_* objects reaching
+ * into Gem); the window draws it at the end of the frame. Always flat-colored and unlit (unlike jet_rectangle, it
  * doesn't sample a bound texture). Like jet_rectangle it is real 3D
  * geometry in the XY plane: it follows the chain's model transform
  * (including Z) and is depth-tested (see jet_depth).
@@ -37,15 +37,13 @@ typedef struct _jet_triangle {
 
 static void jet_triangle_bang(t_jet_triangle *x)
 {
-  id<MTLRenderCommandEncoder> enc = jet_win_current_encoder();
-  id<MTLRenderPipelineState> pipeline = jet_win_flat3d_pipeline();
-  if(!enc || !pipeline) {
+  if(!jet_win_frame_active()) {
     return;  // no jet_win mid-frame right now - just skip quietly
   }
 
-  JetUniforms3D u;
-  jet_fill_uniforms3d(&u, true);  // flat shapes are unlit
-  jet_win_apply_depth(enc);
+  JetDrawDesc d;
+  memset(&d, 0, sizeof(d));
+  jet_fill_uniforms3d(&d.uniforms, true);  // flat shapes are unlit
 
   const float s = x->x_size;
   const float rawX[3] = { 0.f,  -s, s };
@@ -54,14 +52,14 @@ static void jet_triangle_bang(t_jet_triangle *x)
   for(int i = 0; i < 3; i++) {
     verts[i].pos[0] = rawX[i]; verts[i].pos[1] = rawY[i]; verts[i].pos[2] = 0.f;
     verts[i].normal[0] = 0.f; verts[i].normal[1] = 0.f; verts[i].normal[2] = 1.f;
-    memcpy(verts[i].color, u.tint, 3 * sizeof(float));
+    memcpy(verts[i].color, d.uniforms.tint, 3 * sizeof(float));
   }
 
-  [enc setRenderPipelineState:pipeline];
-  [enc setVertexBytes:verts length:sizeof(verts) atIndex:0];
-  [enc setVertexBytes:&u length:sizeof(u) atIndex:1];
-  [enc setFragmentBytes:&u length:sizeof(u) atIndex:1];
-  [enc drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
+  d.pipeline = JET_PIPE_FLAT3D;
+  d.vertices = verts;
+  d.vertexBytes = sizeof(verts);
+  d.vertexCount = 3;
+  jet_win_submit_draw(&d);
   outlet_bang(x->x_outlet);
 }
 

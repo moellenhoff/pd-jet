@@ -8,12 +8,13 @@
  * without jet_head needing to know anything about windowing. See
  * jet_head.mm for the chain-entry-point half of this.
  *
- * Every tick, jet_win begins a Metal render pass, then bangs every
- * currently-registered jet_head (in ascending priority order - see
- * jet_win_register_head() in jet_shared.h) so their chains draw
- * into the pass via the other jet_win_* accessors, then
- * ends/presents the pass once all of them (synchronous, depth-first
- * Pd message dispatch) have run to completion.
+ * Every tick, jet_win bangs every currently-registered jet_head (in
+ * ascending priority order - see jet_win_register_head() in
+ * jet_shared.h). The chains don't draw anything themselves: shapes
+ * RECORD draw commands (jet_win_submit_draw) while the heads run
+ * (synchronous, depth-first Pd message dispatch), and once all of
+ * them have completed the window orders the list, opens ONE on-screen
+ * render pass, executes the commands and presents.
  *
  * Modeled on how Gem's own gemcocoawindow.mm opens its window (see
  * ../Gem/src/Output/gemcocoawindow.mm): a real NSWindow, and instead
@@ -51,6 +52,24 @@ static const int kDefaultFps = 60;
 // ---------------------------------------------------------------
 
 struct HeadEntry { int priority; t_outlet *outlet; };
+
+// one recorded draw (see jet_win_submit_draw). The vertex bytes live in
+// the window's per-frame arena (vertexOffset) unless the shape passed
+// its own persistent MTLBuffer. Metal objects are NOT retained: a
+// command only lives from its bang to the end of the same tick.
+enum DepthMode { kDepthOff = 0, kDepthTestWrite = 1, kDepthTestOnly = 2 };
+struct RecordedDraw {
+  JetPipeline    pipeline;
+  DepthMode      depth;
+  size_t         vertexOffset, vertexBytes;
+  id<MTLBuffer>  vertexBuffer;
+  size_t         vertexBufferOffset;
+  unsigned int   vertexCount;
+  id<MTLTexture> texture;
+  JetUniforms3D  uniforms;
+  float          sortZ;      // view-space z of the model origin, translucent sorting
+  bool           translucent;
+};
 
 static t_class *jet_win_class;
 
@@ -113,6 +132,12 @@ typedef struct _jet_win {
   float       x_lightDir[3];
   float       x_lightColor[3];
   float       x_color[4];  // chain-scoped current color, see jet_shared.h
+
+  // this frame's recorded draws and their vertex data, cleared at the
+  // start of every frame (see jet_win_tick)
+  int         x_frameActive;
+  std::vector<RecordedDraw>   x_draws;
+  std::vector<unsigned char>  x_arena;
 } t_jet_win;
 
 // ---------------------------------------------------------------
@@ -126,9 +151,6 @@ typedef struct _jet_win {
 // window. the render encoder is also fine as a single slot: only one
 // window is ever mid-frame at a time, since jet_win_tick dispatches
 // synchronously on Pd's single main thread.
-static id<MTLRenderCommandEncoder>  g_currentEncoder = nil;
-static id<MTLRenderPipelineState>   g_flatPipeline = nil;
-static id<MTLRenderPipelineState>   g_texturedPipeline = nil;
 static id<MTLSamplerState>          g_sampler = nil;
 static id<MTLDevice>                g_device = nil;
 static id<MTLCommandQueue>          g_queue = nil;
@@ -136,6 +158,7 @@ static id<MTLRenderPipelineState>   g_flat3dPipeline = nil;
 static id<MTLRenderPipelineState>   g_textured3dPipeline = nil;
 static id<MTLDepthStencilState>     g_depthState = nil;
 static id<MTLDepthStencilState>     g_noDepthState = nil;
+static id<MTLDepthStencilState>     g_depthTestOnlyState = nil;  // translucent shapes: test, don't write
 
 // name -> window registry, so jet_head can bind to a specific
 // jet_win at construction time (see jet_win_register_head).
@@ -148,9 +171,7 @@ static std::map<t_symbol *, t_jet_win *> g_windowsByName;
 // banging its own heads and clears it right after.
 static t_jet_win *g_activeWindow = nullptr;
 
-id<MTLRenderCommandEncoder> jet_win_current_encoder(void) { return g_currentEncoder; }
-id<MTLRenderPipelineState> jet_win_flat_pipeline(void) { return g_flatPipeline; }
-id<MTLRenderPipelineState> jet_win_textured_pipeline(void) { return g_texturedPipeline; }
+int jet_win_frame_active(void) { return g_activeWindow && g_activeWindow->x_frameActive; }
 id<MTLSamplerState> jet_win_sampler(void) { return g_sampler; }
 id<MTLDevice> jet_win_device(void) { return g_device; }
 id<MTLCommandQueue> jet_win_queue(void) { return g_queue; }
@@ -273,10 +294,52 @@ void jet_win_set_color(const float rgba[4])
   }
 }
 
-id<MTLRenderPipelineState> jet_win_flat3d_pipeline(void) { return g_flat3dPipeline; }
-id<MTLRenderPipelineState> jet_win_textured3d_pipeline(void) { return g_textured3dPipeline; }
-id<MTLDepthStencilState> jet_win_depth_state(void) { return g_depthState; }
-id<MTLDepthStencilState> jet_win_no_depth_state(void) { return g_noDepthState; }
+
+// records one draw into the active window's frame - see jet_shared.h.
+// Translucent (alpha < 1) shapes with depth testing on are flagged
+// here and run after everything else, sorted back to front.
+extern "C" int jet_win_submit_draw(const JetDrawDesc *d)
+{
+  t_jet_win *w = g_activeWindow;
+  if(!w || !w->x_frameActive || !d || d->vertexCount == 0) {
+    return 0;
+  }
+  RecordedDraw r;
+  r.pipeline = d->pipeline;
+  r.vertexCount = d->vertexCount;
+  r.vertexBuffer = d->vertexBuffer;
+  r.vertexBufferOffset = d->vertexBufferOffset;
+  r.vertexOffset = 0;
+  r.vertexBytes = 0;
+  if(!d->vertexBuffer) {
+    // setVertexBytes is limited to 4 KB - bigger meshes need an MTLBuffer
+    if(!d->vertices || d->vertexBytes == 0 || d->vertexBytes > 4096) {
+      return 0;
+    }
+    r.vertexOffset = w->x_arena.size();
+    r.vertexBytes = d->vertexBytes;
+    const unsigned char *src = (const unsigned char *)d->vertices;
+    w->x_arena.insert(w->x_arena.end(), src, src + d->vertexBytes);
+  }
+  if(d->pipeline == JET_PIPE_TEXTURED3D && !d->texture) {
+    return 0;
+  }
+  r.texture = d->texture;
+  r.uniforms = d->uniforms;
+  r.translucent = d->uniforms.tint[3] < 0.999f;
+  if(!w->x_depth) {
+    r.depth = kDepthOff;
+  } else {
+    r.depth = r.translucent ? kDepthTestOnly : kDepthTestWrite;
+  }
+  // view-space z of the model origin: camera looks down -z, so more
+  // negative = farther away
+  const float *v = d->uniforms.view, *m = d->uniforms.model;
+  const float ox = m[12], oy = m[13], oz = m[14];
+  r.sortZ = v[2] * ox + v[6] * oy + v[10] * oz + v[14];
+  w->x_draws.push_back(r);
+  return 1;
+}
 
 void jet_win_register_head(t_symbol *windowName, void *x, t_outlet *outlet,
                              int priority)
@@ -314,11 +377,11 @@ void jet_win_unregister_head(t_outlet *outlet)
 @property(nonatomic, strong) id<MTLDevice> device;
 @property(nonatomic, strong) id<MTLCommandQueue> queue;
 @property(nonatomic, strong) CAMetalLayer *metalLayer;
-@property(nonatomic, strong) id<CAMetalDrawable> currentDrawable;
-@property(nonatomic, strong) id<MTLCommandBuffer> currentCmdBuf;
 @property(nonatomic, strong) id<MTLTexture> depthTexture;  // 3D depth testing, see ensureDepthTexture
-- (void)beginFrame;
-- (void)endFrame;
+// executes a frame's recorded draws in one on-screen render pass and
+// presents it - see jet_win_submit_draw
+- (void)renderDraws:(const std::vector<RecordedDraw> *)draws
+              arena:(const std::vector<unsigned char> *)arena;
 @end
 
 @implementation JetWinView
@@ -348,59 +411,27 @@ void jet_win_unregister_head(t_outlet *outlet)
   return self;
 }
 
+// classic source-over blending: chain alpha 1 draws opaque exactly as
+// before, anything lower mixes with what is already in the frame
+- (void)enableAlphaBlending:(MTLRenderPipelineDescriptor *)desc
+{
+  MTLRenderPipelineColorAttachmentDescriptor *ca = desc.colorAttachments[0];
+  ca.blendingEnabled = YES;
+  ca.rgbBlendOperation = MTLBlendOperationAdd;
+  ca.alphaBlendOperation = MTLBlendOperationAdd;
+  ca.sourceRGBBlendFactor = MTLBlendFactorSourceAlpha;
+  ca.sourceAlphaBlendFactor = MTLBlendFactorSourceAlpha;
+  ca.destinationRGBBlendFactor = MTLBlendFactorOneMinusSourceAlpha;
+  ca.destinationAlphaBlendFactor = MTLBlendFactorOneMinusSourceAlpha;
+}
+
 - (void)setupPipelines
 {
   NSString *src = @""
     "#include <metal_stdlib>\n"
     "using namespace metal;\n"
-    // packed_float2/packed_float4, NOT float2/float4, for a struct
-    // crossing the CPU->GPU boundary via a raw byte buffer
-    // (setVertexBytes) - same bug class as jet_cube's Vertex3D (see
-    // its comment further down): plain float4 as a struct field needs
-    // 16-byte alignment, but only gets 8 bytes after a plain float2,
-    // so the compiler pads 4 bytes in between - the C++-side FlatVertex
-    // (jet_triangle.mm/jet_rectangle.mm) is tightly packed at 24
-    // bytes/vertex with no such gap, so every vertex after the first
-    // read back at the wrong offset. This is the ORIGINAL 2D pipeline,
-    // present since the very first jet_triangle test - it just never
-    // got caught because every jet_rectangle in this whole project
-    // so far happened to go through the (correctly-aligned, no bug)
-    // TEXTURED path instead of this flat-color one.
-    "struct VertexData { packed_float2 pos; packed_float4 color; };\n"
-    "struct VertexOut { float4 position [[position]]; float4 color; };\n"
-    "vertex VertexOut vertexMain(uint vid [[vertex_id]],\n"
-    "    constant VertexData *verts [[buffer(0)]]) {\n"
-    "  VertexOut out;\n"
-    "  out.position = float4(verts[vid].pos, 0.0, 1.0);\n"
-    "  out.color = verts[vid].color;\n"
-    "  return out;\n"
-    "}\n"
-    "fragment float4 fragmentMain(VertexOut in [[stage_in]]) {\n"
-    "  return in.color;\n"
-    "}\n"
-    // packed_float2 here too, purely for consistency/robustness - its
-    // alignment (8) already happened to match a tightly-packed float2
-    // pos followed by float2 uv (both 8-byte quantities), so this
-    // particular struct was never actually broken, unlike VertexData
-    // above.
-    "struct TexVertexData { packed_float2 pos; float2 uv; };\n"
-    "struct TexVertexOut { float4 position [[position]]; float2 uv; };\n"
-    "vertex TexVertexOut texVertexMain(uint vid [[vertex_id]],\n"
-    "    constant TexVertexData *verts [[buffer(0)]]) {\n"
-    "  TexVertexOut out;\n"
-    "  out.position = float4(verts[vid].pos, 0.0, 1.0);\n"
-    "  out.uv = verts[vid].uv;\n"
-    "  return out;\n"
-    "}\n"
-    // tint = the chain's current color (jet_color): modulates the
-    // texture, like Gem's [color] on a textured shape. white = no change.
-    "fragment float4 texFragmentMain(TexVertexOut in [[stage_in]],\n"
-    "    texture2d<float> tex [[texture(0)]], sampler s [[sampler(0)]],\n"
-    "    constant float4 &tint [[buffer(0)]]) {\n"
-    "  return tex.sample(s, in.uv) * tint;\n"
-    "}\n"
-    // --- 3D: additive, see jet_shared.h's comment on the 3D
-    // accessors for the overall design. Uniforms3D's layout must
+    // --- shapes: see jet_shared.h's comment on the 3D accessors and
+    // draw commands for the overall design. Uniforms3D's layout must
     // match the C++-side Uniforms3D struct byte-for-byte - lightDir/
     // lightColor are float4 (not float3) specifically so there's no
     // float3-padding-rule question to get right on either side at
@@ -439,7 +470,7 @@ void jet_win_unregister_head(t_outlet *outlet)
     "  float ndotl = max(dot(n, normalize(u.lightDir.xyz)), 0.0);\n"
     "  float3 shade = (u.lightDir.w > 0.5) ? float3(1.0) : (0.15 + ndotl * u.lightColor.xyz);\n"
     "  float3 lit = in.color * shade;\n"
-    "  return float4(lit, 1.0);\n"
+    "  return float4(lit, u.tint.a);\n"
     "}\n"
     // packed_float3 here too - see Vertex3D's comment above
     "struct Vertex3DTex { packed_float3 pos; packed_float3 normal; float2 uv; };\n"
@@ -454,6 +485,7 @@ void jet_win_unregister_head(t_outlet *outlet)
     "  out.uv = verts[vid].uv;\n"
     "  return out;\n"
     "}\n"
+    // the texture's own alpha is ignored on purpose: only the chain alpha counts
     "fragment float4 fragment3DTexMain(VOut3DTex in [[stage_in]],\n"
     "    texture2d<float> tex [[texture(0)]], sampler s [[sampler(0)]],\n"
     "    constant Uniforms3D &u [[buffer(1)]]) {\n"
@@ -462,7 +494,7 @@ void jet_win_unregister_head(t_outlet *outlet)
     "  float4 albedo = tex.sample(s, in.uv);\n"
     "  float3 shade = (u.lightDir.w > 0.5) ? float3(1.0) : (0.15 + ndotl * u.lightColor.xyz);\n"
     "  float3 lit = albedo.rgb * u.tint.rgb * shade;\n"
-    "  return float4(lit, albedo.a);\n"
+    "  return float4(lit, u.tint.a);\n"
     "}\n";
 
   NSError *err = nil;
@@ -470,24 +502,6 @@ void jet_win_unregister_head(t_outlet *outlet)
   if(!lib) {
     post("jet_win: shader compile failed: %s", [[err localizedDescription] UTF8String]);
     return;
-  }
-
-  MTLRenderPipelineDescriptor *flatDesc = [[MTLRenderPipelineDescriptor alloc] init];
-  flatDesc.vertexFunction = [lib newFunctionWithName:@"vertexMain"];
-  flatDesc.fragmentFunction = [lib newFunctionWithName:@"fragmentMain"];
-  flatDesc.colorAttachments[0].pixelFormat = MTLPixelFormatBGRA8Unorm;
-  g_flatPipeline = [self.device newRenderPipelineStateWithDescriptor:flatDesc error:&err];
-  if(!g_flatPipeline) {
-    post("jet_win: flat pipeline build failed: %s", [[err localizedDescription] UTF8String]);
-  }
-
-  MTLRenderPipelineDescriptor *texDesc = [[MTLRenderPipelineDescriptor alloc] init];
-  texDesc.vertexFunction = [lib newFunctionWithName:@"texVertexMain"];
-  texDesc.fragmentFunction = [lib newFunctionWithName:@"texFragmentMain"];
-  texDesc.colorAttachments[0].pixelFormat = MTLPixelFormatBGRA8Unorm;
-  g_texturedPipeline = [self.device newRenderPipelineStateWithDescriptor:texDesc error:&err];
-  if(!g_texturedPipeline) {
-    post("jet_win: textured pipeline build failed: %s", [[err localizedDescription] UTF8String]);
   }
 
   MTLSamplerDescriptor *sampDesc = [[MTLSamplerDescriptor alloc] init];
@@ -504,6 +518,7 @@ void jet_win_unregister_head(t_outlet *outlet)
   flat3dDesc.fragmentFunction = [lib newFunctionWithName:@"fragment3DFlatMain"];
   flat3dDesc.colorAttachments[0].pixelFormat = MTLPixelFormatBGRA8Unorm;
   flat3dDesc.depthAttachmentPixelFormat = MTLPixelFormatDepth32Float;
+  [self enableAlphaBlending:flat3dDesc];
   g_flat3dPipeline = [self.device newRenderPipelineStateWithDescriptor:flat3dDesc error:&err];
   if(!g_flat3dPipeline) {
     post("jet_win: flat3d pipeline build failed: %s", [[err localizedDescription] UTF8String]);
@@ -514,6 +529,7 @@ void jet_win_unregister_head(t_outlet *outlet)
   tex3dDesc.fragmentFunction = [lib newFunctionWithName:@"fragment3DTexMain"];
   tex3dDesc.colorAttachments[0].pixelFormat = MTLPixelFormatBGRA8Unorm;
   tex3dDesc.depthAttachmentPixelFormat = MTLPixelFormatDepth32Float;
+  [self enableAlphaBlending:tex3dDesc];
   g_textured3dPipeline = [self.device newRenderPipelineStateWithDescriptor:tex3dDesc error:&err];
   if(!g_textured3dPipeline) {
     post("jet_win: textured3d pipeline build failed: %s", [[err localizedDescription] UTF8String]);
@@ -528,10 +544,15 @@ void jet_win_unregister_head(t_outlet *outlet)
   noDepthDesc.depthCompareFunction = MTLCompareFunctionAlways;
   noDepthDesc.depthWriteEnabled = NO;
   g_noDepthState = [self.device newDepthStencilStateWithDescriptor:noDepthDesc];
+
+  MTLDepthStencilDescriptor *testOnlyDesc = [[MTLDepthStencilDescriptor alloc] init];
+  testOnlyDesc.depthCompareFunction = MTLCompareFunctionLessEqual;
+  testOnlyDesc.depthWriteEnabled = NO;
+  g_depthTestOnlyState = [self.device newDepthStencilStateWithDescriptor:testOnlyDesc];
 }
 
 // (re)creates the depth buffer to match the drawable's current size -
-// called from beginFrame, so it stays in sync with resizes without
+// called from renderDraws, so it stays in sync with resizes without
 // needing its own hook into setFrameSize:
 - (void)ensureDepthTexture
 {
@@ -578,54 +599,88 @@ void jet_win_unregister_head(t_outlet *outlet)
   [super keyDown:event];
 }
 
-- (void)beginFrame
+- (void)renderDraws:(const std::vector<RecordedDraw> *)draws
+              arena:(const std::vector<unsigned char> *)arena
 {
-  if(!g_flatPipeline) {
+  if(!g_flat3dPipeline || !g_textured3dPipeline) {
     return;
   }
-  self.currentDrawable = [self.metalLayer nextDrawable];
-  if(!self.currentDrawable) {
+  // acquired late on purpose: the drawable is only held from here to
+  // present, not while the chains run
+  [self ensureDepthTexture];
+  if(!self.depthTexture) {
+    return;
+  }
+  id<CAMetalDrawable> drawable = [self.metalLayer nextDrawable];
+  if(!drawable) {
     return;
   }
 
   MTLRenderPassDescriptor *pass = [MTLRenderPassDescriptor renderPassDescriptor];
-  pass.colorAttachments[0].texture = self.currentDrawable.texture;
+  pass.colorAttachments[0].texture = drawable.texture;
   pass.colorAttachments[0].loadAction = MTLLoadActionClear;
   pass.colorAttachments[0].clearColor = MTLClearColorMake(0.07, 0.07, 0.10, 1.0);
   pass.colorAttachments[0].storeAction = MTLStoreActionStore;
+  pass.depthAttachment.texture = self.depthTexture;
+  pass.depthAttachment.loadAction = MTLLoadActionClear;
+  pass.depthAttachment.clearDepth = 1.0;
+  pass.depthAttachment.storeAction = MTLStoreActionDontCare;
 
-  // 3D: shared by every jet_head this frame - the same window-wide
-  // "one on-screen pass for the whole frame" the 2D pipeline already
-  // uses (see the file header comment). 2D shape draws simply never
-  // set a depth-stencil state, so they're unaffected by this being
-  // present.
-  [self ensureDepthTexture];
-  if(self.depthTexture) {
-    pass.depthAttachment.texture = self.depthTexture;
-    pass.depthAttachment.loadAction = MTLLoadActionClear;
-    pass.depthAttachment.clearDepth = 1.0;
-    pass.depthAttachment.storeAction = MTLStoreActionDontCare;
-  }
-
-  self.currentCmdBuf = [self.queue commandBuffer];
-  g_currentEncoder = [self.currentCmdBuf renderCommandEncoderWithDescriptor:pass];
-}
-
-- (void)endFrame
-{
-  if(!g_currentEncoder) {
+  id<MTLCommandBuffer> cmdBuf = [self.queue commandBuffer];
+  id<MTLRenderCommandEncoder> enc = [cmdBuf renderCommandEncoderWithDescriptor:pass];
+  if(!enc) {
     return;
   }
-  [g_currentEncoder endEncoding];
-  [self.currentCmdBuf presentDrawable:self.currentDrawable];
-  [self.currentCmdBuf commit];
 
-  g_currentEncoder = nil;
-  // NOTE: the owning window's x_currentTexture is cleared by
-  // jet_win_tick right after this call, not here - this view has
-  // no reference back to its t_jet_win.
-  self.currentCmdBuf = nil;
-  self.currentDrawable = nil;
+  // execution order: everything except depth-tested translucent
+  // shapes in submission order, then the translucent ones back to front
+  std::vector<const RecordedDraw *> order;
+  std::vector<const RecordedDraw *> translucent;
+  order.reserve(draws->size());
+  for(const RecordedDraw &d : *draws) {
+    if(d.depth == kDepthTestOnly) {
+      translucent.push_back(&d);
+    } else {
+      order.push_back(&d);
+    }
+  }
+  std::stable_sort(translucent.begin(), translucent.end(),
+                   [](const RecordedDraw *a, const RecordedDraw *b) {
+    return a->sortZ < b->sortZ;
+  });
+  order.insert(order.end(), translucent.begin(), translucent.end());
+
+  int lastPipeline = -1, lastDepth = -1;
+  for(const RecordedDraw *d : order) {
+    if((int)d->pipeline != lastPipeline) {
+      [enc setRenderPipelineState:(d->pipeline == JET_PIPE_TEXTURED3D)
+                                    ? g_textured3dPipeline : g_flat3dPipeline];
+      lastPipeline = (int)d->pipeline;
+    }
+    if((int)d->depth != lastDepth) {
+      id<MTLDepthStencilState> st =
+        (d->depth == kDepthOff) ? g_noDepthState :
+        (d->depth == kDepthTestOnly) ? g_depthTestOnlyState : g_depthState;
+      [enc setDepthStencilState:st];
+      lastDepth = (int)d->depth;
+    }
+    if(d->vertexBuffer) {
+      [enc setVertexBuffer:d->vertexBuffer offset:d->vertexBufferOffset atIndex:0];
+    } else {
+      [enc setVertexBytes:arena->data() + d->vertexOffset length:d->vertexBytes atIndex:0];
+    }
+    [enc setVertexBytes:&d->uniforms length:sizeof(JetUniforms3D) atIndex:1];
+    [enc setFragmentBytes:&d->uniforms length:sizeof(JetUniforms3D) atIndex:1];
+    if(d->pipeline == JET_PIPE_TEXTURED3D) {
+      [enc setFragmentTexture:d->texture atIndex:0];
+      [enc setFragmentSamplerState:g_sampler atIndex:0];
+    }
+    [enc drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:d->vertexCount];
+  }
+
+  [enc endEncoding];
+  [cmdBuf presentDrawable:drawable];
+  [cmdBuf commit];
 }
 
 @end
@@ -878,12 +933,6 @@ static void jet_win_beginChain(t_jet_win *x)
 
   // a texture one chain bound (or rendered) isn't this chain's input
   x->x_currentTexture = nil;
-
-  // encoder state: shapes set their own depth state when they draw;
-  // this is just a safe baseline
-  if(g_currentEncoder && g_noDepthState) {
-    [g_currentEncoder setDepthStencilState:g_noDepthState];
-  }
 }
 
 static void jet_win_tick(t_jet_win *x)
@@ -945,7 +994,9 @@ static void jet_win_tick(t_jet_win *x)
   jet_mat4_perspective(x->x_fovDeg * (float)M_PI / 180.f, aspect,
                          x->x_nearZ, x->x_farZ, x->x_projMatrix);
 
-  [x->x_view beginFrame];
+  x->x_draws.clear();
+  x->x_arena.clear();
+  x->x_frameActive = (g_flat3dPipeline && g_textured3dPipeline) ? 1 : 0;
   // dispatch to every jet_head registered to THIS window, in
   // priority order - each one's chain draws into the frame we just
   // began. every chain starts from a clean slate (jet_win_beginChain),
@@ -956,7 +1007,8 @@ static void jet_win_tick(t_jet_win *x)
     jet_win_beginChain(x);
     outlet_bang(h.outlet);
   }
-  [x->x_view endFrame];
+  x->x_frameActive = 0;
+  [x->x_view renderDraws:&x->x_draws arena:&x->x_arena];
   x->x_currentTexture = nil;  // texture binding only lasts one frame
   g_activeWindow = nullptr;
 
@@ -1068,6 +1120,8 @@ static void jet_win_free(t_jet_win *x)
   jet_win_destroy(x);
   clock_free(x->x_clock);
   delete x->x_title;
+  std::vector<RecordedDraw>().swap(x->x_draws);
+  std::vector<unsigned char>().swap(x->x_arena);
 
   auto it = g_windowsByName.find(x->x_name);
   if(it != g_windowsByName.end() && it->second == x) {
