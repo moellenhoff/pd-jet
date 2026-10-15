@@ -145,7 +145,7 @@ time, so a new block is a short `.metal` file plus a four-line `.mm` file.
 ## Building from source
 
 ```bash
-git clone https://github.com/<you>/pd-jet.git
+git clone https://github.com/moellenhoff/pd-jet.git
 cd pd-jet
 make PD_APP=/Applications/Pd-0.56-2.app       # builds build/*.pd_darwin
 make shadertest                               # compiles every embedded shader and checks the parameter layout on the GPU
