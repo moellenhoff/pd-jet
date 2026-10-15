@@ -111,6 +111,25 @@ id<MTLTexture> jet_win_named_texture(t_symbol *name);
 id<MTLTexture> jet_win_pool_acquire(int w, int h);
 void jet_win_pool_release(id<MTLTexture> tex);
 
+// SCENES: render part of a chain into a texture instead of the window
+// (jet_render). jet_win_scene_begin starts a separate recording with its
+// own camera and light and a clean chain state (transform, colour, depth
+// and current texture are saved and reset); shapes that run until
+// jet_win_scene_end are recorded into it, not into the window's frame.
+// scene_end draws the recording into `color` (cleared to `clear`, RGBA)
+// using `depth` (Depth32Float, same size) and restores the saved state.
+// `color` must be BGRA8 (jet_win_pool_acquire_bgra) - the shape pipelines
+// are built for that format. Scenes may nest a few levels deep.
+typedef struct {
+  float view[16], projection[16];
+  float lightDir[3], lightColor[3];
+  float aspect;
+} JetSceneCamera;
+int  jet_win_scene_begin(const JetSceneCamera *cam);
+void jet_win_scene_end(id<MTLTexture> color, id<MTLTexture> depth, const float clear[4]);
+// like jet_win_pool_acquire, but BGRA8 (what scene targets need)
+id<MTLTexture> jet_win_pool_acquire_bgra(int w, int h);
+
 // jet_head calls these in its constructor/destructor to join/leave
 // a specific jet_win's set of chains that get banged once per
 // frame, in ascending priority order (same convention as Gem's

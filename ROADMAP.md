@@ -34,7 +34,7 @@ eigener Block dazu.
 
 - `jet_obj`: OBJ + MTL laden, texturiertes Blender-Modell mit Licht
   (die bestehende 3D-Basis: Kamera, Tiefentest, ein Richtungslicht)
-- Szene-in-Textur (`jet_render` o. ä.), mehrere Kameras, Schatten
+- Schatten, mehrere Lichter (Szene-in-Textur: `jet_render` ist da)
 - Eigene Shader: `jet_shader` ist da (Fragment-Effekte aus Dateien mit
   `// @param` / `// @input` / `// @feedback` / `// @size`, Parameter werden
   zu Inlets, Autoreload, Beispiele in `shaders/`). `// @history N`
@@ -108,6 +108,12 @@ eigener Block dazu.
   Knoten seine Textur, bis alles darunter durchgelaufen ist (Pd liefert
   keine Information über spätere Leser) - das spart erst die spätere
   Verschmelzung benachbarter Punktoperationen zu einem Durchlauf.
+- **Szenen** (`jet_render w h`): der linke Auslass ist die Szene (eigene
+  Kamera, eigenes Licht, saubere Kettenzustände, eigene Zeichenliste, die
+  beim Ende sofort in eine BGRA-Pooltextur gezeichnet wird), der rechte
+  Auslass liefert das Ergebnis als aktuelle Textur. Szenen dürfen bis zu
+  vier Ebenen tief verschachtelt sein. `readback` druckt zwei Pixel des
+  Ergebnisses zur Kontrolle (so lässt sich Rendering ohne Screenshot prüfen).
 - **Alpha** kommt aus `jet_color r g b a`; Texturen-Alpha wird ignoriert.
 - **Zustandsbereiche** (Kette / Frame / Objekt) stehen im Kopf von
   `src/jet_shared.h`.

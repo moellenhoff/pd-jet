@@ -71,6 +71,18 @@ struct RecordedDraw {
   bool           translucent;
 };
 
+// a separate recording with its own camera (jet_render); the saved
+// chain state is put back when it ends
+struct SceneScope {
+  std::vector<RecordedDraw>  draws;
+  std::vector<unsigned char> arena;
+  float view[16], proj[16], lightDir[3], lightColor[3], aspect;
+  float savedTransform[16], savedColor[4];
+  int   savedDepth;
+  id<MTLTexture> savedTexture;
+};
+
+
 static t_class *jet_win_class;
 
 typedef struct _jet_win {
@@ -138,6 +150,7 @@ typedef struct _jet_win {
   int         x_frameActive;
   std::vector<RecordedDraw>   x_draws;
   std::vector<unsigned char>  x_arena;
+  std::vector<SceneScope *> x_scopes;        // open jet_render scenes, innermost last
   std::vector<id<MTLTexture> > x_framePins;  // pooled textures sampled by this frame's draws
 
   // named textures (jet_share/jet_use), see jet_shared.h. A pointer
@@ -211,6 +224,7 @@ void jet_win_publish_texture(t_symbol *name, id<MTLTexture> tex)
 struct PoolEntry {
   id<MTLTexture> tex;
   int  w, h;
+  bool bgra;
   bool inUse;
   int  pins;
   long lastUsed;
@@ -226,26 +240,30 @@ static PoolEntry *jet_pool_find(id<MTLTexture> tex)
   return nullptr;
 }
 
-id<MTLTexture> jet_win_pool_acquire(int w, int h)
+static id<MTLTexture> jet_pool_acquire(int w, int h, bool bgra)
 {
   if(!g_device || w < 1 || h < 1) return nil;
   for(PoolEntry &e : g_pool) {
-    if(!e.inUse && e.pins == 0 && e.w == w && e.h == h) {
+    if(!e.inUse && e.pins == 0 && e.w == w && e.h == h && e.bgra == bgra) {
       e.inUse = true;
       e.lastUsed = g_poolFrame;
       return e.tex;
     }
   }
   MTLTextureDescriptor *desc =
-    [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm
+    [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:(bgra ? MTLPixelFormatBGRA8Unorm
+                                                                    : MTLPixelFormatRGBA8Unorm)
                                                         width:w height:h mipmapped:NO];
   desc.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;
   desc.storageMode = MTLStorageModePrivate;
   id<MTLTexture> tex = [g_device newTextureWithDescriptor:desc];  // +1, owned by the pool
   if(!tex) return nil;
-  g_pool.push_back({ tex, w, h, true, 0, g_poolFrame });
+  g_pool.push_back({ tex, w, h, bgra, true, 0, g_poolFrame });
   return tex;
 }
+
+id<MTLTexture> jet_win_pool_acquire(int w, int h) { return jet_pool_acquire(w, h, false); }
+id<MTLTexture> jet_win_pool_acquire_bgra(int w, int h) { return jet_pool_acquire(w, h, true); }
 
 void jet_win_pool_release(id<MTLTexture> tex)
 {
@@ -330,6 +348,7 @@ id<MTLTexture> jet_win_current_texture(void)
 
 float jet_win_get_aspect(void)
 {
+  if(g_activeWindow && !g_activeWindow->x_scopes.empty()) return g_activeWindow->x_scopes.back()->aspect;
   return (g_activeWindow && g_activeWindow->x_aspect > 0.f) ? g_activeWindow->x_aspect : 1.f;
 }
 
@@ -369,8 +388,10 @@ void jet_win_get_view(float outMat16[16])
     jet_mat4_identity(outMat16);
     return;
   }
+  const float *src = g_activeWindow->x_scopes.empty() ? g_activeWindow->x_viewMatrix
+                                                      : g_activeWindow->x_scopes.back()->view;
   for(int i = 0; i < 16; i++) {
-    outMat16[i] = g_activeWindow->x_viewMatrix[i];
+    outMat16[i] = src[i];
   }
 }
 void jet_win_get_projection(float outMat16[16])
@@ -379,8 +400,10 @@ void jet_win_get_projection(float outMat16[16])
     jet_mat4_identity(outMat16);
     return;
   }
+  const float *src = g_activeWindow->x_scopes.empty() ? g_activeWindow->x_projMatrix
+                                                      : g_activeWindow->x_scopes.back()->proj;
   for(int i = 0; i < 16; i++) {
-    outMat16[i] = g_activeWindow->x_projMatrix[i];
+    outMat16[i] = src[i];
   }
 }
 void jet_win_get_light(float outDir3[3], float outColor3[3])
@@ -390,9 +413,10 @@ void jet_win_get_light(float outDir3[3], float outColor3[3])
     outColor3[0] = outColor3[1] = outColor3[2] = 1.f;
     return;
   }
+  const bool scoped = !g_activeWindow->x_scopes.empty();
   for(int i = 0; i < 3; i++) {
-    outDir3[i] = g_activeWindow->x_lightDir[i];
-    outColor3[i] = g_activeWindow->x_lightColor[i];
+    outDir3[i] = scoped ? g_activeWindow->x_scopes.back()->lightDir[i] : g_activeWindow->x_lightDir[i];
+    outColor3[i] = scoped ? g_activeWindow->x_scopes.back()->lightColor[i] : g_activeWindow->x_lightColor[i];
   }
 }
 
@@ -434,10 +458,11 @@ extern "C" int jet_win_submit_draw(const JetDrawDesc *d)
     if(!d->vertices || d->vertexBytes == 0 || d->vertexBytes > 4096) {
       return 0;
     }
-    r.vertexOffset = w->x_arena.size();
+    std::vector<unsigned char> &arena = w->x_scopes.empty() ? w->x_arena : w->x_scopes.back()->arena;
+    r.vertexOffset = arena.size();
     r.vertexBytes = d->vertexBytes;
     const unsigned char *src = (const unsigned char *)d->vertices;
-    w->x_arena.insert(w->x_arena.end(), src, src + d->vertexBytes);
+    arena.insert(arena.end(), src, src + d->vertexBytes);
   }
   if(d->pipeline == JET_PIPE_TEXTURED3D && !d->texture) {
     return 0;
@@ -461,7 +486,7 @@ extern "C" int jet_win_submit_draw(const JetDrawDesc *d)
   const float *v = d->uniforms.view, *m = d->uniforms.model;
   const float ox = m[12], oy = m[13], oz = m[14];
   r.sortZ = v[2] * ox + v[6] * oy + v[10] * oz + v[14];
-  w->x_draws.push_back(r);
+  (w->x_scopes.empty() ? w->x_draws : w->x_scopes.back()->draws).push_back(r);
   return 1;
 }
 
@@ -496,6 +521,115 @@ void jet_win_unregister_head(t_outlet *outlet)
 // ---------------------------------------------------------------
 // the Metal-backed view
 // ---------------------------------------------------------------
+
+// draws a recorded list into an open render pass: everything except
+// depth-tested translucent shapes in submission order, then the
+// translucent ones back to front
+static void jet_encode_draws(id<MTLRenderCommandEncoder> enc,
+                             const std::vector<RecordedDraw> &draws,
+                             const std::vector<unsigned char> &arena)
+{
+  std::vector<const RecordedDraw *> order;
+  std::vector<const RecordedDraw *> translucent;
+  order.reserve(draws.size());
+  for(const RecordedDraw &d : draws) {
+    if(d.depth == kDepthTestOnly) {
+      translucent.push_back(&d);
+    } else {
+      order.push_back(&d);
+    }
+  }
+  std::stable_sort(translucent.begin(), translucent.end(),
+                   [](const RecordedDraw *a, const RecordedDraw *b) {
+    return a->sortZ < b->sortZ;
+  });
+  order.insert(order.end(), translucent.begin(), translucent.end());
+
+  int lastPipeline = -1, lastDepth = -1;
+  for(const RecordedDraw *d : order) {
+    if((int)d->pipeline != lastPipeline) {
+      [enc setRenderPipelineState:(d->pipeline == JET_PIPE_TEXTURED3D)
+                                    ? g_textured3dPipeline : g_flat3dPipeline];
+      lastPipeline = (int)d->pipeline;
+    }
+    if((int)d->depth != lastDepth) {
+      id<MTLDepthStencilState> st =
+        (d->depth == kDepthOff) ? g_noDepthState :
+        (d->depth == kDepthTestOnly) ? g_depthTestOnlyState : g_depthState;
+      [enc setDepthStencilState:st];
+      lastDepth = (int)d->depth;
+    }
+    if(d->vertexBuffer) {
+      [enc setVertexBuffer:d->vertexBuffer offset:d->vertexBufferOffset atIndex:0];
+    } else {
+      [enc setVertexBytes:arena.data() + d->vertexOffset length:d->vertexBytes atIndex:0];
+    }
+    [enc setVertexBytes:&d->uniforms length:sizeof(JetUniforms3D) atIndex:1];
+    [enc setFragmentBytes:&d->uniforms length:sizeof(JetUniforms3D) atIndex:1];
+    if(d->pipeline == JET_PIPE_TEXTURED3D) {
+      [enc setFragmentTexture:d->texture atIndex:0];
+      [enc setFragmentSamplerState:g_sampler atIndex:0];
+    }
+    [enc drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:d->vertexCount];
+  }
+}
+
+// ---- scenes (jet_render), see jet_shared.h ----
+extern "C" int jet_win_scene_begin(const JetSceneCamera *cam)
+{
+  t_jet_win *w = g_activeWindow;
+  if(!w || !w->x_frameActive || !cam || w->x_scopes.size() >= 4) return 0;
+  SceneScope *sc = new SceneScope();
+  memcpy(sc->view, cam->view, sizeof(sc->view));
+  memcpy(sc->proj, cam->projection, sizeof(sc->proj));
+  memcpy(sc->lightDir, cam->lightDir, sizeof(sc->lightDir));
+  memcpy(sc->lightColor, cam->lightColor, sizeof(sc->lightColor));
+  sc->aspect = cam->aspect;
+  // save the chain state and start the scene with a clean one
+  memcpy(sc->savedTransform, w->x_transform3d, sizeof(sc->savedTransform));
+  memcpy(sc->savedColor, w->x_color, sizeof(sc->savedColor));
+  sc->savedDepth = w->x_depth;
+  sc->savedTexture = w->x_currentTexture;
+  jet_mat4_identity(w->x_transform3d);
+  w->x_color[0] = w->x_color[1] = w->x_color[2] = w->x_color[3] = 1.f;
+  w->x_depth = 1;
+  w->x_currentTexture = nil;
+  w->x_scopes.push_back(sc);
+  return 1;
+}
+
+extern "C" void jet_win_scene_end(id<MTLTexture> color, id<MTLTexture> depth, const float clear[4])
+{
+  t_jet_win *w = g_activeWindow;
+  if(!w || w->x_scopes.empty()) return;
+  SceneScope *sc = w->x_scopes.back();
+  w->x_scopes.pop_back();
+
+  if(color && depth && g_flat3dPipeline && g_textured3dPipeline) {
+    MTLRenderPassDescriptor *pass = [MTLRenderPassDescriptor renderPassDescriptor];
+    pass.colorAttachments[0].texture = color;
+    pass.colorAttachments[0].loadAction = MTLLoadActionClear;
+    pass.colorAttachments[0].clearColor = MTLClearColorMake(clear[0], clear[1], clear[2], clear[3]);
+    pass.colorAttachments[0].storeAction = MTLStoreActionStore;
+    pass.depthAttachment.texture = depth;
+    pass.depthAttachment.loadAction = MTLLoadActionClear;
+    pass.depthAttachment.clearDepth = 1.0;
+    pass.depthAttachment.storeAction = MTLStoreActionDontCare;
+    id<MTLCommandBuffer> cb = [g_queue commandBuffer];
+    id<MTLRenderCommandEncoder> enc = [cb renderCommandEncoderWithDescriptor:pass];
+    if(enc) {
+      jet_encode_draws(enc, sc->draws, sc->arena);
+      [enc endEncoding];
+      [cb commit];   // before the window's own pass is committed: it samples this
+    }
+  }
+
+  memcpy(w->x_transform3d, sc->savedTransform, sizeof(sc->savedTransform));
+  memcpy(w->x_color, sc->savedColor, sizeof(sc->savedColor));
+  w->x_depth = sc->savedDepth;
+  w->x_currentTexture = sc->savedTexture;
+  delete sc;
+}
 
 @interface JetWinView : NSView
 @property(nonatomic, strong) id<MTLDevice> device;
@@ -756,51 +890,7 @@ void jet_win_unregister_head(t_outlet *outlet)
     return;
   }
 
-  // execution order: everything except depth-tested translucent
-  // shapes in submission order, then the translucent ones back to front
-  std::vector<const RecordedDraw *> order;
-  std::vector<const RecordedDraw *> translucent;
-  order.reserve(draws->size());
-  for(const RecordedDraw &d : *draws) {
-    if(d.depth == kDepthTestOnly) {
-      translucent.push_back(&d);
-    } else {
-      order.push_back(&d);
-    }
-  }
-  std::stable_sort(translucent.begin(), translucent.end(),
-                   [](const RecordedDraw *a, const RecordedDraw *b) {
-    return a->sortZ < b->sortZ;
-  });
-  order.insert(order.end(), translucent.begin(), translucent.end());
-
-  int lastPipeline = -1, lastDepth = -1;
-  for(const RecordedDraw *d : order) {
-    if((int)d->pipeline != lastPipeline) {
-      [enc setRenderPipelineState:(d->pipeline == JET_PIPE_TEXTURED3D)
-                                    ? g_textured3dPipeline : g_flat3dPipeline];
-      lastPipeline = (int)d->pipeline;
-    }
-    if((int)d->depth != lastDepth) {
-      id<MTLDepthStencilState> st =
-        (d->depth == kDepthOff) ? g_noDepthState :
-        (d->depth == kDepthTestOnly) ? g_depthTestOnlyState : g_depthState;
-      [enc setDepthStencilState:st];
-      lastDepth = (int)d->depth;
-    }
-    if(d->vertexBuffer) {
-      [enc setVertexBuffer:d->vertexBuffer offset:d->vertexBufferOffset atIndex:0];
-    } else {
-      [enc setVertexBytes:arena->data() + d->vertexOffset length:d->vertexBytes atIndex:0];
-    }
-    [enc setVertexBytes:&d->uniforms length:sizeof(JetUniforms3D) atIndex:1];
-    [enc setFragmentBytes:&d->uniforms length:sizeof(JetUniforms3D) atIndex:1];
-    if(d->pipeline == JET_PIPE_TEXTURED3D) {
-      [enc setFragmentTexture:d->texture atIndex:0];
-      [enc setFragmentSamplerState:g_sampler atIndex:0];
-    }
-    [enc drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:d->vertexCount];
-  }
+  jet_encode_draws(enc, *draws, *arena);
 
   [enc endEncoding];
   [cmdBuf presentDrawable:drawable];
@@ -1257,6 +1347,8 @@ static void jet_win_free(t_jet_win *x)
   std::vector<RecordedDraw>().swap(x->x_draws);
   std::vector<unsigned char>().swap(x->x_arena);
   std::vector<id<MTLTexture> >().swap(x->x_framePins);
+  for(SceneScope *sc : x->x_scopes) delete sc;
+  x->x_scopes.clear();
 
   auto it = g_windowsByName.find(x->x_name);
   if(it != g_windowsByName.end() && it->second == x) {

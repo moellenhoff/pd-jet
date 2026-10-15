@@ -106,6 +106,7 @@ A video-effect chain looks like this:
 | Window / chain | `jet_win` (window, camera, light, render on/off), `jet_head` (chain start; optional priority and window name) |
 | State | `jet_color r g b a`, `jet_depth`, `jet_separator`, `jet_translateXYZ`, `jet_rotateXYZ`, `jet_scaleXYZ` |
 | Shapes | `jet_rectangle`, `jet_triangle`, `jet_cube` (real 3D geometry; textured if a texture is current) |
+| Scenes | `jet_render` (renders a sub-scene with its own camera into a texture) |
 | Sources | `jet_video` (live camera), `jet_movie` and `jet_movie~` (video file with audio-synced playback), `jet_image` + `jet_texture` (image file), `jet_perlin` (noise), `jet_feedback` |
 | Named textures | `jet_share`, `jet_use` |
 | Effect blocks | `jet_level`, `jet_hsv`, `jet_blur`, `jet_mix`, `jet_uvtransform`, `jet_threshold` |
@@ -186,7 +187,7 @@ bundles must come from the same build.
 
 ## Roadmap and known issues
 
-See [ROADMAP.md](ROADMAP.md). Planned: scene-to-texture (`jet_render`), more effect blocks
+See [ROADMAP.md](ROADMAP.md). Planned: more effect blocks
 (edge, displace, mirror, tile), fusing neighbouring per-pixel effects into one GPU pass, compute shaders,
 OBJ model loading with lighting. Known issues: reverse video playback is choppy, and leaving fullscreen
 with ESC is not fully reliable.
