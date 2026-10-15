@@ -40,8 +40,8 @@ eigener Block dazu.
   zu Inlets, Autoreload, Beispiele in `shaders/`). `// @history N`
   (Ringpuffer der letzten N Frames des ersten Eingangs,
   `jet_history(t, p, uv, framesAgo)`) trägt `shaders/slitscan.metal` und
-  `slitscan_line.metal`, die `jet_slitscan`/`jet_slitscan_line` ersetzen
-  sollen (Objekte bleiben, bis der Vergleich im Bild bestätigt ist).
+  `slitscan_line.metal`; die früheren Objekte `jet_slitscan` und
+  `jet_slitscan_line` sind entfernt.
   Offen: mehrere Durchläufe pro Objekt, `jet_compute`
   (Compute-Shader), Slider/Min-Max-Bereiche für Parameter
 - Weitere Primitive, Material-/Lichtmodell erweitern

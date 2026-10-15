@@ -19,7 +19,7 @@
 #X obj 300 425 jet_use noise;
 #X obj 300 455 jet_cube 2.5;
 #X text 210 260 <- runs after priority 0 \, so "noise" is already there;
-#X text 40 500 [jet_use name] makes the texture published as "name" (by [jet_share name]) the chain's current texture and forwards the bang. Everything after it - jet_rectangle \, jet_cube \, jet_feedback \, jet_slitscan - sees it as if the producer sat right above. Right inlet or "name <symbol>" changes the name \, for instance to switch between several textures.;
+#X text 40 500 [jet_use name] makes the texture published as "name" (by [jet_share name]) the chain's current texture and forwards the bang. Everything after it - jet_rectangle \, jet_cube \, jet_feedback \, jet_shader - sees it as if the producer sat right above. Right inlet or "name <symbol>" changes the name \, for instance to switch between several textures.;
 #X text 40 610 Any number of consumers may use the same name \, in any chain. If the name has not been published (yet) \, the current texture is left as it was and the bang is forwarded \; the first frames are allowed to miss \, after about two seconds a message appears in the Pd window. Wrap a branch in [jet_separator] so the texture bound by jet_use doesn't leak into its siblings.;
 #X text 40 720 Tip: names are per jet_win. Two windows can use the same name for different textures without interfering.;
 #X connect 1 0 0 0;

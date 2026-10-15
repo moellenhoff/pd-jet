@@ -1,7 +1,7 @@
 /* ------------------------------------------------------------------
  * jet_use - binds a named texture (published with [jet_share <name>])
  * as the chain's current texture, then forwards the bang. Everything
- * after it - jet_rectangle, jet_cube, jet_feedback, jet_slitscan, ... -
+ * after it - jet_rectangle, jet_cube, jet_feedback, jet_shader, ... -
  * sees it exactly as if the producer sat right above it. The same
  * name can be used by any number of consumers, in any chain.
  *
