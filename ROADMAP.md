@@ -124,7 +124,11 @@ eigener Block dazu.
   `~/Documents/Pd/externals/jet/`; `make install-only` kopiert nur, was
   schon gebaut ist. `make package` erzeugt `dist/jet/` und
   `dist/jet-macos-arm64.zip` für einen anderen Mac (Apple Silicon, macOS 11+,
-  ad-hoc signiert, mit `tools/INSTALL.txt`).
+  ad-hoc signiert, mit `tools/INSTALL.txt`). `tools/install-release.sh`
+  installiert ein Release per `gh`/`curl` im Terminal - ohne Browser-
+  Quarantäne, ohne Kompilieren. Eine echte Lösung für Downloads per Browser
+  wäre Developer-ID-Signatur + Notarisierung (bezahltes Apple-Konto nötig)
+  oder die Verteilung über Deken.
 - `make shadertest` zieht alle eingebetteten Shader aus `src/*.mm`
   (`tools/extract_msl.py`) und kompiliert sie mit Metals Laufzeit-Compiler
   (`tools/msltest.mm`), also auf demselben Weg wie Pd beim Laden. Fängt

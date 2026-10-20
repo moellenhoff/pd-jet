@@ -36,14 +36,31 @@ Linux, Windows and other graphics APIs are not planned for now — the project i
 
 ## Install
 
-**From a release** (nothing to compile): download `jet-macos-arm64.zip` from the Releases page,
-unzip it and put the folder `jet` into `~/Documents/Pd/externals/`. Everything — objects (`*.pd_darwin`),
-help patches, effect files (`*.metal`) and sample media — lives flat in that one folder, which is how
-Pd finds it. Then:
+**Recommended: the install script** (no compiling, no macOS warnings). Files that the Terminal downloads never get
+the quarantine flag that makes macOS refuse to load a browser-downloaded plug-in, so this just works:
 
 ```bash
-xattr -cr ~/Documents/Pd/externals/jet     # remove the download quarantine flag
+tools/install-release.sh              # from a clone of this repo; newest release, or add a tag like v0.2.0
+# without a clone (public repo):
+curl -fsSL https://raw.githubusercontent.com/moellenhoff/pd-jet/main/tools/install-release.sh | bash
 ```
+
+It needs either the GitHub CLI (`gh`, logged in — required while the repo is private) or `curl`, puts the folder
+`jet` into `~/Documents/Pd/externals/` (the previous one is kept as `jet.previous`) and reminds you of the
+Pd path. Then restart Pd.
+
+**From a release zip by hand** (nothing to compile): download `jet-macos-arm64.zip` from the Releases page,
+unzip it and put the folder `jet` into `~/Documents/Pd/externals/`. Everything — objects (`*.pd_darwin`),
+help patches, effect files (`*.metal`) and sample media — lives flat in that one folder, which is how
+Pd finds it. Because the zip came through a browser, macOS marks it as quarantined and may refuse to load the objects;
+remove the flag:
+
+```bash
+xattr -dr com.apple.quarantine ~/Documents/Pd/externals/jet
+```
+
+(If that is not allowed, the Terminal probably lacks access to your Documents folder — System Settings →
+Privacy & Security → Files and Folders / Full Disk Access — or use the install script above.)
 
 In Pd, add `~/Documents/Pd/externals/jet` under *Preferences → Path*, and restart Pd completely
 (Pd loads a library only once per session, so a restart is also needed after every update).

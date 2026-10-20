@@ -9,6 +9,9 @@ Installation (nichts muss kompiliert werden):
    (Der Ordner enthaelt die Objekte *.pd_darwin, die Hilfe-Patches *-help.pd,
    die Effekt-Dateien *.metal und anim-1.mov flach nebeneinander - so soll es sein.)
 
+   Am einfachsten ohne Browser-Download:  tools/install-release.sh  (im Repo) -
+   Dateien, die das Terminal holt, bekommen die Download-Markierung gar nicht.
+
 2. Falls der Ordner heruntergeladen oder per AirDrop/Mail gekommen ist, entfernt
    man die Download-Markierung von macOS, sonst blockiert sie das Laden:
 
