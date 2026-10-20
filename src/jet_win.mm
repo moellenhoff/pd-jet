@@ -997,6 +997,15 @@ static void jet_win_create(t_jet_win *x)
   }
 
   [NSApplication sharedApplication];
+  // Pd's core is a plain command-line process, which macOS treats as
+  // "prohibited": it can show windows, but is never the active app and
+  // its windows never get the keyboard (so ESC in fullscreen went to
+  // Pd's GUI instead). "Accessory" lifts that without a Dock icon or a
+  // menu bar of its own. A host that is already a regular app keeps its
+  // policy.
+  if([NSApp activationPolicy] == NSApplicationActivationPolicyProhibited) {
+    [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
+  }
 
   const NSRect frame = NSMakeRect(0, 0, x->x_dimenW, x->x_dimenH);
   NSWindow *win = [[JetNSWindow alloc] initWithContentRect:frame
