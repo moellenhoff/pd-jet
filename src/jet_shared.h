@@ -204,9 +204,16 @@ void jet_win_set_depth(int on);
 //     submission order, so depth-off layering keeps painter's order;
 //   - depth-tested translucent shapes run afterwards, sorted back to
 //     front, testing depth but not writing it.
-// Pipelines: FLAT3D takes JetVertex3D, TEXTURED3D takes JetVertex3DTex
-// (+ a texture); both take the JetUniforms3D block defined below.
-typedef enum { JET_PIPE_FLAT3D = 0, JET_PIPE_TEXTURED3D = 1 } JetPipeline;
+// Pipelines: FLAT3D takes JetVertex3D, the others JetVertex3DTex (TEXTURED3D
+// and DISC_TEXTURED also need a texture); all take the JetUniforms3D block
+// defined below.
+typedef enum {
+  JET_PIPE_FLAT3D = 0,        // JetVertex3D, flat colour (+ lighting)
+  JET_PIPE_TEXTURED3D = 1,    // JetVertex3DTex + texture
+  JET_PIPE_DISC_FLAT = 2,     // JetVertex3DTex (uv 0..1 across a quad): an ellipse
+                              //   inscribed in the quad, smooth edge, chain colour
+  JET_PIPE_DISC_TEXTURED = 3  // the same, filled with the texture
+} JetPipeline;
 
 
 

@@ -33,6 +33,7 @@
 
 #include "m_pd.h"
 #include "jet_shared.h"
+#include "jet_quad.h"
 
 #include <string.h>
 
@@ -46,49 +47,7 @@ typedef struct _jet_rectangle {
 
 static void jet_rectangle_bang(t_jet_rectangle *x)
 {
-  if(!jet_win_frame_active()) {
-    return;  // no jet_win mid-frame right now - just skip quietly
-  }
-
-  const float w = x->x_w, h = x->x_h;
-  // corners: [0]=top-left [1]=bottom-left [2]=bottom-right [3]=top-right
-  const float cx[4] = { -w, -w,  w,  w };
-  const float cy[4] = {  h, -h, -h,  h };
-  const float cu[4] = {  0,  0,  1,  1 };
-  const float cv[4] = {  0,  1,  1,  0 };
-  const int   tri[6] = { 0, 1, 2, 0, 2, 3 };
-
-  JetDrawDesc d;
-  memset(&d, 0, sizeof(d));
-  jet_fill_uniforms3d(&d.uniforms, true);  // flat shapes are unlit
-  d.vertexCount = 6;
-
-  id<MTLTexture> tex = jet_win_current_texture();
-  JetVertex3DTex tverts[6];
-  JetVertex3D fverts[6];
-  if(tex) {
-    for(int i = 0; i < 6; i++) {
-      const int c = tri[i];
-      tverts[i].pos[0] = cx[c]; tverts[i].pos[1] = cy[c]; tverts[i].pos[2] = 0.f;
-      tverts[i].normal[0] = 0.f; tverts[i].normal[1] = 0.f; tverts[i].normal[2] = 1.f;
-      tverts[i].uv[0] = cu[c]; tverts[i].uv[1] = cv[c];
-    }
-    d.pipeline = JET_PIPE_TEXTURED3D;
-    d.texture = tex;
-    d.vertices = tverts;
-    d.vertexBytes = sizeof(tverts);
-  } else {
-    for(int i = 0; i < 6; i++) {
-      const int c = tri[i];
-      fverts[i].pos[0] = cx[c]; fverts[i].pos[1] = cy[c]; fverts[i].pos[2] = 0.f;
-      fverts[i].normal[0] = 0.f; fverts[i].normal[1] = 0.f; fverts[i].normal[2] = 1.f;
-      memcpy(fverts[i].color, d.uniforms.tint, 3 * sizeof(float));
-    }
-    d.pipeline = JET_PIPE_FLAT3D;
-    d.vertices = fverts;
-    d.vertexBytes = sizeof(fverts);
-  }
-  jet_win_submit_draw(&d);
+  jet_quad_draw(x->x_w, x->x_h, false);
   outlet_bang(x->x_outlet);
 }
 

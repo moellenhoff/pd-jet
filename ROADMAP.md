@@ -45,7 +45,10 @@ eigener Block dazu.
   Offen: Verschmelzen von Punktoperationen, mehrere Durchläufe pro Objekt
   (z. B. getrennter Blur), weitere Bausteine (edge, displace, mirror, tile), `jet_compute`
   (Compute-Shader), Slider/Min-Max-Bereiche für Parameter
-- Weitere Primitive, Material-/Lichtmodell erweitern
+- Weitere Primitive (`jet_ring`/Umriss mit Strichstärke, `jet_line`,
+  `jet_polygon n`, Kugel/Zylinder), Kantenglättung (MSAA) für alle Formen
+  (Kreis/Ellipse haben bereits eine glatte Kante per Shader),
+  Material-/Lichtmodell erweitern
 - Linux/Windows (Vulkan-Backend oder WebGPU), erst wenn der Mac-Kern
   steht
 - libpd nur, falls später Standalone-Apps/iOS gewünscht sind (dann
@@ -62,8 +65,8 @@ eigener Block dazu.
 ## Konventionen
 
 - **Einheiten = Gem-Einheiten.** Das fertige Bild ist 8 Einheiten hoch
-  (y = -4..+4) und 8·Aspekt breit. Formen (`jet_rectangle`,
-  `jet_triangle`) arbeiten darin; die Standardkamera (z = 4, fov 90)
+  (y = -4..+4) und 8·Aspekt breit. Formen (`jet_rectangle`, `jet_square`,
+  `jet_circle`, `jet_ellipse`, `jet_triangle`) arbeiten darin; die Standardkamera (z = 4, fov 90)
   macht die z=0-Ebene 8 Einheiten hoch. `[jet_rectangle 5.33 4]`
   füllt ein 800x600-Fenster wie `[rectangle 5.33 4]` in Gem. Parameter
   von Rechteck/Dreieck sind Halbmaße.

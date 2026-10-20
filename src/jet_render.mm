@@ -32,8 +32,9 @@
  *   lightcolor r g b                           (the window's light)
  *   clear r g b [a] background colour          (0 0 0 1)
  *   resolution w h  same as the two inlets
- *   readback        diagnostic: the next bang prints the colour of the
- *                   centre and of a corner pixel of the result
+ *   readback [fx fy]  diagnostic: the next bang prints the colour of the
+ *                   centre and of a corner pixel of the result (and of the
+ *                   pixel at fx fy, 0..1 across the texture, if given)
  *
  * With the default camera and a 4:3 texture, [jet_rectangle 5.33 4] fills
  * the whole scene, as it does in the window. The scene's aspect ratio is
@@ -64,6 +65,7 @@ typedef struct _jet_render {
   id<MTLTexture> x_depth;     // Depth32Float, owned (+1)
   int       x_depthW, x_depthH;
   int       x_readback;
+  float     x_readbackAt[2];   // extra pixel to print, 0..1 across the texture (-1 = none)
 } t_jet_render;
 
 static id<MTLTexture> jet_render_depth(t_jet_render *x, int w, int h)
@@ -87,7 +89,12 @@ static id<MTLTexture> jet_render_depth(t_jet_render *x, int w, int h)
 static void jet_render_readback(t_jet_render *x, id<MTLTexture> color, int w, int h)
 {
   id<MTLDevice> device = jet_win_device();
-  id<MTLBuffer> buf = [device newBufferWithLength:8 options:MTLResourceStorageModeShared];
+  id<MTLBuffer> buf = [device newBufferWithLength:12 options:MTLResourceStorageModeShared];
+  int ex = (int)(x->x_readbackAt[0] * w), ey = (int)(x->x_readbackAt[1] * h);
+  if(ex < 0) ex = 0;
+  if(ey < 0) ey = 0;
+  if(ex >= w) ex = w - 1;
+  if(ey >= h) ey = h - 1;
   id<MTLCommandBuffer> cb = [jet_win_queue() commandBuffer];
   id<MTLBlitCommandEncoder> blit = [cb blitCommandEncoder];
   [blit copyFromTexture:color sourceSlice:0 sourceLevel:0
@@ -96,6 +103,11 @@ static void jet_render_readback(t_jet_render *x, id<MTLTexture> color, int w, in
   [blit copyFromTexture:color sourceSlice:0 sourceLevel:0
            sourceOrigin:MTLOriginMake(1, 1, 0) sourceSize:MTLSizeMake(1, 1, 1)
                toBuffer:buf destinationOffset:4 destinationBytesPerRow:4 destinationBytesPerImage:4];
+  if(x->x_readbackAt[0] >= 0.f) {
+    [blit copyFromTexture:color sourceSlice:0 sourceLevel:0
+             sourceOrigin:MTLOriginMake(ex, ey, 0) sourceSize:MTLSizeMake(1, 1, 1)
+                 toBuffer:buf destinationOffset:8 destinationBytesPerRow:4 destinationBytesPerImage:4];
+  }
   [blit endEncoding];
   [cb commit];
   [cb waitUntilCompleted];
@@ -103,6 +115,9 @@ static void jet_render_readback(t_jet_render *x, id<MTLTexture> color, int w, in
   // the texture is BGRA
   post("jet_render: centre pixel r=%d g=%d b=%d a=%d, corner pixel r=%d g=%d b=%d a=%d",
        p[2], p[1], p[0], p[3], p[6], p[5], p[4], p[7]);
+  if(x->x_readbackAt[0] >= 0.f) {
+    post("jet_render: pixel at %d %d: r=%d g=%d b=%d a=%d", ex, ey, p[10], p[9], p[8], p[11]);
+  }
   [buf release];
 }
 
@@ -191,9 +206,13 @@ static void jet_render_resolution(t_jet_render *x, t_floatarg w, t_floatarg h)
   x->x_w = w;
   x->x_h = h;
 }
-static void jet_render_readbackMsg(t_jet_render *x)
+static void jet_render_readbackMsg(t_jet_render *x, t_symbol *s, int argc, t_atom *argv)
 {
+  (void)s;
   x->x_readback = 1;
+  // optional: "readback fx fy" also prints the pixel at that fraction of the texture
+  x->x_readbackAt[0] = (argc >= 2) ? atom_getfloat(argv) : -1.f;
+  x->x_readbackAt[1] = (argc >= 2) ? atom_getfloat(argv + 1) : -1.f;
 }
 
 static void *jet_render_new(t_symbol *s, int argc, t_atom *argv)
@@ -213,6 +232,7 @@ static void *jet_render_new(t_symbol *s, int argc, t_atom *argv)
   x->x_depth = nil;
   x->x_depthW = x->x_depthH = 0;
   x->x_readback = 0;
+  x->x_readbackAt[0] = x->x_readbackAt[1] = -1.f;
 
   floatinlet_new(&x->x_obj, &x->x_w);
   floatinlet_new(&x->x_obj, &x->x_h);
@@ -248,5 +268,5 @@ extern "C" void jet_render_setup(void)
   class_addmethod(jet_render_class, (t_method)jet_render_clear, gensym("clear"), A_GIMME, 0);
   class_addmethod(jet_render_class, (t_method)jet_render_resolution, gensym("resolution"),
                   A_FLOAT, A_FLOAT, 0);
-  class_addmethod(jet_render_class, (t_method)jet_render_readbackMsg, gensym("readback"), A_NULL);
+  class_addmethod(jet_render_class, (t_method)jet_render_readbackMsg, gensym("readback"), A_GIMME, 0);
 }

@@ -179,6 +179,8 @@ static id<MTLDevice>                g_device = nil;
 static id<MTLCommandQueue>          g_queue = nil;
 static id<MTLRenderPipelineState>   g_flat3dPipeline = nil;
 static id<MTLRenderPipelineState>   g_textured3dPipeline = nil;
+static id<MTLRenderPipelineState>   g_discFlatPipeline = nil;      // smooth ellipse in a quad
+static id<MTLRenderPipelineState>   g_discTexPipeline = nil;
 static id<MTLDepthStencilState>     g_depthState = nil;
 static id<MTLDepthStencilState>     g_noDepthState = nil;
 static id<MTLDepthStencilState>     g_depthTestOnlyState = nil;  // translucent shapes: test, don't write
@@ -468,7 +470,7 @@ extern "C" int jet_win_submit_draw(const JetDrawDesc *d)
     const unsigned char *src = (const unsigned char *)d->vertices;
     arena.insert(arena.end(), src, src + d->vertexBytes);
   }
-  if(d->pipeline == JET_PIPE_TEXTURED3D && !d->texture) {
+  if((d->pipeline == JET_PIPE_TEXTURED3D || d->pipeline == JET_PIPE_DISC_TEXTURED) && !d->texture) {
     return 0;
   }
   r.texture = d->texture;
@@ -551,9 +553,13 @@ static void jet_encode_draws(id<MTLRenderCommandEncoder> enc,
 
   int lastPipeline = -1, lastDepth = -1;
   for(const RecordedDraw *d : order) {
+    id<MTLRenderPipelineState> pso =
+      d->pipeline == JET_PIPE_TEXTURED3D ? g_textured3dPipeline :
+      d->pipeline == JET_PIPE_DISC_FLAT ? g_discFlatPipeline :
+      d->pipeline == JET_PIPE_DISC_TEXTURED ? g_discTexPipeline : g_flat3dPipeline;
+    if(!pso) continue;
     if((int)d->pipeline != lastPipeline) {
-      [enc setRenderPipelineState:(d->pipeline == JET_PIPE_TEXTURED3D)
-                                    ? g_textured3dPipeline : g_flat3dPipeline];
+      [enc setRenderPipelineState:pso];
       lastPipeline = (int)d->pipeline;
     }
     if((int)d->depth != lastDepth) {
@@ -570,7 +576,7 @@ static void jet_encode_draws(id<MTLRenderCommandEncoder> enc,
     }
     [enc setVertexBytes:&d->uniforms length:sizeof(JetUniforms3D) atIndex:1];
     [enc setFragmentBytes:&d->uniforms length:sizeof(JetUniforms3D) atIndex:1];
-    if(d->pipeline == JET_PIPE_TEXTURED3D) {
+    if(d->pipeline == JET_PIPE_TEXTURED3D || d->pipeline == JET_PIPE_DISC_TEXTURED) {
       [enc setFragmentTexture:d->texture atIndex:0];
       [enc setFragmentSamplerState:g_sampler atIndex:0];
     }
@@ -757,6 +763,29 @@ extern "C" void jet_win_scene_end(id<MTLTexture> color, id<MTLTexture> depth, co
     "  float3 shade = (u.lightDir.w > 0.5) ? float3(1.0) : (0.15 + ndotl * u.lightColor.xyz);\n"
     "  float3 lit = albedo.rgb * u.tint.rgb * shade;\n"
     "  return float4(lit, u.tint.a);\n"
+    "}\n"
+    // ellipse inscribed in a quad whose uv runs 0..1: coverage ramps from 1
+    // to 0 over the last pixel inside the edge (fwidth of the normalised
+    // radius is one pixel), which gives a smooth edge at any size, scale
+    // and tilt. the edge pixels get partial alpha (blending is on)
+    "float jetDiscCover(float2 uv) {\n"
+    "  float r = length(uv * 2.0 - 1.0);\n"
+    "  float aa = max(fwidth(r), 0.0001);\n"
+    "  return clamp((1.0 - r) / aa, 0.0, 1.0);\n"
+    "}\n"
+    "fragment float4 fragment3DDiscFlatMain(VOut3DTex in [[stage_in]],\n"
+    "    constant Uniforms3D &u [[buffer(1)]]) {\n"
+    "  float cover = jetDiscCover(in.uv);\n"
+    "  if(cover <= 0.0) { discard_fragment(); }\n"
+    "  return float4(u.tint.rgb, u.tint.a * cover);\n"
+    "}\n"
+    "fragment float4 fragment3DDiscTexMain(VOut3DTex in [[stage_in]],\n"
+    "    texture2d<float> tex [[texture(0)]], sampler s [[sampler(0)]],\n"
+    "    constant Uniforms3D &u [[buffer(1)]]) {\n"
+    "  float cover = jetDiscCover(in.uv);\n"
+    "  if(cover <= 0.0) { discard_fragment(); }\n"
+    "  float3 c = tex.sample(s, in.uv).rgb * u.tint.rgb;\n"
+    "  return float4(c, u.tint.a * cover);\n"
     "}\n";
 
   NSError *err = nil;
@@ -795,6 +824,23 @@ extern "C" void jet_win_scene_end(id<MTLTexture> color, id<MTLTexture> depth, co
   g_textured3dPipeline = [self.device newRenderPipelineStateWithDescriptor:tex3dDesc error:&err];
   if(!g_textured3dPipeline) {
     post("jet_win: textured3d pipeline build failed: %s", [[err localizedDescription] UTF8String]);
+  }
+
+  // smooth-edged ellipse pipelines: same vertex stage as the textured one
+  MTLRenderPipelineDescriptor *discDesc = [[MTLRenderPipelineDescriptor alloc] init];
+  discDesc.vertexFunction = [lib newFunctionWithName:@"vertex3DTexMain"];
+  discDesc.colorAttachments[0].pixelFormat = MTLPixelFormatBGRA8Unorm;
+  discDesc.depthAttachmentPixelFormat = MTLPixelFormatDepth32Float;
+  [self enableAlphaBlending:discDesc];
+  discDesc.fragmentFunction = [lib newFunctionWithName:@"fragment3DDiscFlatMain"];
+  g_discFlatPipeline = [self.device newRenderPipelineStateWithDescriptor:discDesc error:&err];
+  if(!g_discFlatPipeline) {
+    post("jet_win: disc pipeline build failed: %s", [[err localizedDescription] UTF8String]);
+  }
+  discDesc.fragmentFunction = [lib newFunctionWithName:@"fragment3DDiscTexMain"];
+  g_discTexPipeline = [self.device newRenderPipelineStateWithDescriptor:discDesc error:&err];
+  if(!g_discTexPipeline) {
+    post("jet_win: textured disc pipeline build failed: %s", [[err localizedDescription] UTF8String]);
   }
 
   MTLDepthStencilDescriptor *depthDesc = [[MTLDepthStencilDescriptor alloc] init];
