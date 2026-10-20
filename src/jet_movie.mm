@@ -86,6 +86,7 @@ static t_class *jet_movie_class;
 @property(nonatomic, assign) int width;
 @property(nonatomic, assign) int height;
 @property(nonatomic, assign) float nominalFrameRate;  // the clip's own fps, from its track
+@property(nonatomic, assign) int frameCount;   // length in frames (duration x fps), 0 if unknown
 @property(nonatomic, assign) double lastPts;  // last decoded frame's timestamp, in clip seconds
 
 - (BOOL)openPath:(NSString *)path errorOut:(NSString **)errorOut;
@@ -161,6 +162,10 @@ static t_class *jet_movie_class;
   self.width = (int)fabs(size.width);
   self.height = (int)fabs(size.height);
   self.nominalFrameRate = (track.nominalFrameRate > 0.f) ? track.nominalFrameRate : 30.f;
+  {
+    const double dur = CMTimeGetSeconds(asset.duration);
+    self.frameCount = (dur > 0.0 && isfinite(dur)) ? (int)lround(dur * self.nominalFrameRate) : 0;
+  }
   self.lastPts = 0.0;
 
   return [self restartReaderErrorOut:errorOut];
@@ -354,7 +359,7 @@ struct JetMovieAsync {
   // manual seek (either mode, from a plain float to the inlet):
   // bumped to request an immediate, unconditional seek.
   uint32_t manualSeekRequest = 0;
-  double manualSeekTargetSeconds = 0.0;
+  int manualSeekFrame = 0;   // a frame INDEX: converting to seconds and back could land one frame off
 
   // background -> control
   std::vector<unsigned char> readyRgba;
@@ -398,7 +403,8 @@ static void jet_movie_async_run(JetMovieAsync *a)
   while(!a->stopRequested.load()) {
     int loop, playing;
     uint32_t nextFrameRequest, manualSeekRequest;
-    double syncTarget, manualSeekTarget;
+    double syncTarget;
+    int manualSeekFrame;
     {
       std::unique_lock<std::mutex> lock(a->mutex);
       a->cv.wait_for(lock, std::chrono::milliseconds(20));
@@ -407,7 +413,7 @@ static void jet_movie_async_run(JetMovieAsync *a)
       nextFrameRequest = a->nextFrameRequest;
       syncTarget = a->syncTargetSeconds;
       manualSeekRequest = a->manualSeekRequest;
-      manualSeekTarget = a->manualSeekTargetSeconds;
+      manualSeekFrame = a->manualSeekFrame;
     }
     if(a->stopRequested.load()) {
       break;
@@ -416,7 +422,10 @@ static void jet_movie_async_run(JetMovieAsync *a)
       atEnd = false;  // give a forward-stalled reader another chance
     }
     seenLoop = loop;
-    if(!playing) {
+    // a paused clip still follows an explicit seek (a number into the
+    // inlet): that is how you scrub frame by frame; only the automatic
+    // advance below waits for "play 1"
+    if(!playing && manualSeekRequest == seenManualSeekRequest) {
       continue;
     }
 
@@ -428,16 +437,19 @@ static void jet_movie_async_run(JetMovieAsync *a)
       if(manualSeekRequest != seenManualSeekRequest) {
         seenManualSeekRequest = manualSeekRequest;
         const float fps = a->decoder.nominalFrameRate;
-        int frame = (int)(manualSeekTarget * (fps > 0.f ? fps : 30.f));
-        if(frame < 0) {
-          frame = 0;
+        // a frame beyond the end wraps around while looping and stops at
+        // the last frame otherwise (a seek past the end would fail)
+        int frame = manualSeekFrame < 0 ? 0 : manualSeekFrame;
+        const int total = a->decoder.frameCount;
+        if(total > 0 && frame >= total) {
+          frame = loop ? frame % total : total - 1;
         }
         NSString *err = nil;
         if([a->decoder seekToFrame:frame rgba:rgba errorOut:&err]) {
           decoded = true;
           atEnd = false;
           shownFirstSyncFrame = true;
-          lastSeenSyncTarget = manualSeekTarget;
+          lastSeenSyncTarget = frame / (double)(fps > 0.f ? fps : 30.f);
           staleSyncWakeups = 0;
         }
       } else if(a->hasSync) {
@@ -731,10 +743,9 @@ static void jet_movie_float(t_jet_movie *x, t_floatarg f)
   if(frame < 0) {
     frame = 0;
   }
-  const float fps = x->x_decoder.nominalFrameRate;
   {
     std::lock_guard<std::mutex> lock(x->x_async->mutex);
-    x->x_async->manualSeekTargetSeconds = frame / (double)(fps > 0.f ? fps : 30.f);
+    x->x_async->manualSeekFrame = frame;
     x->x_async->manualSeekRequest++;
   }
   x->x_async->cv.notify_one();

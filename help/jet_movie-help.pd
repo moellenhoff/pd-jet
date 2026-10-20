@@ -29,7 +29,7 @@ while stopped to step through the clip \, and playback continues
 forward from wherever you sought to. reaching the end with loop
 off now only prints one error and then goes quiet \, auto-stopping
 instead of spamming the console. audio isn't handled by this object
-- that's a separate \, real Pd signal object for a future session.;
+- that's a separate \, real Pd signal object for a future session. \; frame numbers work while paused too (play 0) - you can scrub through the clip with a slider or a counter. A number beyond the last frame wraps around while loop is on and stops at the last frame while loop is off.;
 #X connect 1 0 0 0;
 #X connect 2 0 0 0;
 #X connect 3 0 4 0;
