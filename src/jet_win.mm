@@ -99,6 +99,7 @@ typedef struct _jet_win {
   // jet_win_register_head below) - both default to "default", so
   // a single unnamed window/head pair needs no naming at all.
   t_symbol   *x_name;
+  void       *x_keyProxy;   // bound to #key, see jet_win_keyproxy_float
 
   // gemwin-style configurable state - stored so "dimen"/"offset"/
   // etc. work whether sent before or after "create". x_title is a
@@ -1035,6 +1036,29 @@ static void jet_win_applyFullscreen(t_jet_win *x)
   [win makeFirstResponder:x->x_view];
 }
 
+// ESC, the Pd way. Pd forwards every key press that reaches one of its own
+// windows to whatever is bound to the symbol "#key" (that is how [key]
+// works). A fullscreen jet window usually does not have the keyboard -
+// macOS no longer lets a background process take the focus by itself - so
+// the keys land in Pd's GUI instead; listening on "#key" catches ESC there
+// too. (The window's own key handling covers the case where the jet window
+// has the focus, e.g. after a click.) A small proxy object is bound
+// because jet_win's own float method already means "render on/off".
+typedef struct _jet_win_keyproxy {
+  t_pd       kp_pd;
+  t_jet_win *kp_owner;
+} t_jet_win_keyproxy;
+
+static t_class *jet_win_keyproxy_class;
+
+static void jet_win_keyproxy_float(t_jet_win_keyproxy *p, t_floatarg f)
+{
+  if((int)f == 27 && p->kp_owner->x_isFs) {
+    p->kp_owner->x_fullscreen = 0;
+    jet_win_applyFullscreen(p->kp_owner);
+  }
+}
+
 static void jet_win_create(t_jet_win *x)
 {
   if(x->x_open) {
@@ -1403,6 +1427,12 @@ static void *jet_win_new(t_symbol *s, int argc, t_atom *argv)
   t_jet_win *x = (t_jet_win *)pd_new(jet_win_class);
   (void)s;
   x->x_clock = clock_new(x, (t_method)jet_win_tick);
+  {
+    t_jet_win_keyproxy *kp = (t_jet_win_keyproxy *)pd_new(jet_win_keyproxy_class);
+    kp->kp_owner = x;
+    pd_bind(&kp->kp_pd, gensym("#key"));
+    x->x_keyProxy = kp;
+  }
   x->x_fpsOutlet = outlet_new(&x->x_obj, &s_float);
   x->x_window = nil;
   x->x_view = nil;
@@ -1488,6 +1518,12 @@ static void *jet_win_new(t_symbol *s, int argc, t_atom *argv)
 
 static void jet_win_free(t_jet_win *x)
 {
+  if(x->x_keyProxy) {
+    t_jet_win_keyproxy *kp = (t_jet_win_keyproxy *)x->x_keyProxy;
+    pd_unbind(&kp->kp_pd, gensym("#key"));
+    pd_free(&kp->kp_pd);
+    x->x_keyProxy = nullptr;
+  }
   jet_win_destroy(x);
   clock_free(x->x_clock);
   delete x->x_title;
@@ -1511,6 +1547,10 @@ static void jet_win_free(t_jet_win *x)
 
 extern "C" void jet_win_setup(void)
 {
+  jet_win_keyproxy_class = class_new(gensym("jet_win_keyproxy"), 0, 0,
+                                     sizeof(t_jet_win_keyproxy), CLASS_PD | CLASS_NOINLET, A_NULL);
+  class_addfloat(jet_win_keyproxy_class, (t_method)jet_win_keyproxy_float);
+
   jet_win_class = class_new(gensym("jet_win"),
                               (t_newmethod)jet_win_new,
                               (t_method)jet_win_free,
